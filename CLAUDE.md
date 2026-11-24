@@ -6,9 +6,9 @@
 
 ## 沟通
 
-- 回复一律用简体中文；代码标识符、命令、路径照原样写。
-- 提交信息用中文，前缀照 `类型(范围): 说明`，例如 `fix(translate): …`、`refactor(api): …`。
-  合并提交写 `Merge branch 'xxx'：一句话说清合进来什么`。
+- Reply in English; write code identifiers, commands and paths as-is. (This fork's owner works in English, 2026-11-24.)
+- Commit messages in English, prefixed `type(scope): summary`, e.g. `fix(translate): …`, `refactor(api): …`.
+  Merge commits: `Merge branch 'xxx': one sentence saying what it brings in`.
 
 ## 分工
 
