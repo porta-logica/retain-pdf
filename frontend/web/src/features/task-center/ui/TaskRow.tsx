@@ -2,7 +2,7 @@
 import type { JobListItemView } from "@retainpdf/contracts/job-status";
 import { FileText, LoaderCircle, RotateCcw, Square } from "lucide-react";
 import { isActiveJobStatus } from "@retainpdf/domain/job";
-import { formatZhDateTime } from "@/platform/utils/datetime.js";
+import { formatDateTime } from "@/platform/utils/datetime.js";
 import {
   taskDocumentLabel,
   taskIdentity,
@@ -19,7 +19,7 @@ function shortJobId(jobId: string): string {
 function formatUpdatedAt(value: string): string {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "";
-  return formatZhDateTime(date);
+  return formatDateTime(date);
 }
 
 export function TaskRow({ job, busyAction, onOpen, onCancel, onRetry }: {

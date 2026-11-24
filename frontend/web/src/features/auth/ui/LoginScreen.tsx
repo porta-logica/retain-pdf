@@ -1,13 +1,15 @@
-// 多用户模式的登录界面：登录，或者用管理员发的邀请码自己注册（没有找回密码：忘了找管理员重置）。
-// 地址带 ?invite=… 时直接打开注册表单并填好邀请码。首次登录 / 密码被重置过的账号，登录后接着强制改密码。
+// Multi-user sign-in screen: sign in, or self-register with an invite code from an administrator (no password
+// recovery: an administrator resets forgotten passwords). With ?invite=… in the address the registration form
+// opens pre-filled. Accounts signing in for the first time or after a reset must change their password next.
 import { useState, type FormEvent } from "react";
 import { changePassword, login, logout, register as registerApi } from "@retainpdf/api/auth";
-import { authErrorText } from "../domain/auth-errors.js";
-import { readInviteParam, registerProblem } from "../domain/register.js";
+import { authErrorText, MIN_PASSWORD_LENGTH } from "../domain/auth-errors.js";
+import { MAX_PASSWORD_LENGTH, readInviteParam, registerProblem } from "../domain/register.js";
+import { useT } from "@/platform/i18n/index.js";
 import { ChangePasswordForm } from "./ChangePasswordForm.jsx";
 
 const reload = () => globalThis.location?.reload();
-// 注册成功已经是登录状态：回首页，顺手去掉地址栏里的邀请码。
+// After registering the user is already signed in: go home, dropping the invite code from the address.
 const goHome = () => globalThis.location?.replace("./index.html");
 
 export function LoginScreen({
@@ -40,6 +42,7 @@ function LoginCard({
   onSuccess: () => void;
   onRegister: () => void;
 }) {
+  const t = useT();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -48,7 +51,7 @@ function LoginCard({
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!username.trim() || !password) {
-      setError("请填用户名和密码。");
+      setError(t("auth.login.missing_fields"));
       return;
     }
     setBusy(true);
@@ -57,32 +60,32 @@ function LoginCard({
       await submit(username.trim(), password);
       onSuccess();
     } catch (err) {
-      setError(authErrorText(err, "登录失败，请稍后再试。"));
+      setError(authErrorText(err, t("auth.login.failed")));
       setBusy(false);
     }
   }
 
   return (
     <main className="auth-screen" data-auth-screen="login">
-      <section className="auth-card" aria-label="登录">
+      <section className="auth-card" aria-label={t("auth.login.aria")}>
         <h1>RetainPDF</h1>
-        <p className="auth-sub">请用你的账号登录。</p>
+        <p className="auth-sub">{t("auth.login.subtitle")}</p>
         <form className="auth-form" onSubmit={onSubmit} data-auth-form="login">
           <label className="auth-field">
-            <span>用户名</span>
+            <span>{t("auth.field.username")}</span>
             <input autoComplete="username" autoFocus value={username} onChange={(e) => setUsername(e.target.value)} />
           </label>
           <label className="auth-field">
-            <span>密码</span>
+            <span>{t("auth.field.password")}</span>
             <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </label>
           {error ? <p className="auth-error" role="alert">{error}</p> : null}
-          <button type="submit" className="auth-primary" disabled={busy}>{busy ? "正在登录…" : "登录"}</button>
+          <button type="submit" className="auth-primary" disabled={busy}>{busy ? t("auth.login.submitting") : t("auth.login.submit")}</button>
         </form>
         <p className="auth-foot">
-          收到了邀请码？<button type="button" className="auth-link auth-inline-link" data-auth-action="to-register" onClick={onRegister}>用邀请码注册</button>
+          {t("auth.login.have_invite")}<button type="button" className="auth-link auth-inline-link" data-auth-action="to-register" onClick={onRegister}>{t("auth.login.to_register")}</button>
         </p>
-        <p className="auth-foot">忘了密码请联系管理员重置。</p>
+        <p className="auth-foot">{t("auth.login.forgot_password")}</p>
       </section>
     </main>
   );
@@ -99,6 +102,7 @@ function RegisterCard({
   onRegistered: () => void;
   onLogin: () => void;
 }) {
+  const t = useT();
   const [inviteCode, setInviteCode] = useState(initialInvite);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -119,20 +123,21 @@ function RegisterCard({
       await register(inviteCode.trim(), username.trim(), password);
       onRegistered();
     } catch (err) {
-      // 后端的原因都是中文（邀请码不对 / 作废 / 过期 / 用完、用户名被占用……），失败时邀请码不会被用掉。
-      setError(authErrorText(err, "注册失败，请稍后再试。"));
+      // The backend explains why (invite code wrong / revoked / expired / used up, username taken, …);
+      // a failed registration does not use up the invite code.
+      setError(authErrorText(err, t("auth.register.failed")));
       setBusy(false);
     }
   }
 
   return (
     <main className="auth-screen" data-auth-screen="register">
-      <section className="auth-card" aria-label="用邀请码注册">
-        <h1>用邀请码注册</h1>
-        <p className="auth-sub">填管理员给你的邀请码，再设一个用户名和密码。注册完直接登录。</p>
+      <section className="auth-card" aria-label={t("auth.register.title")}>
+        <h1>{t("auth.register.title")}</h1>
+        <p className="auth-sub">{t("auth.register.subtitle")}</p>
         <form className="auth-form" onSubmit={onSubmit} data-auth-form="register">
           <label className="auth-field">
-            <span>邀请码</span>
+            <span>{t("auth.field.invite_code")}</span>
             <input
               autoComplete="off"
               spellCheck={false}
@@ -143,24 +148,24 @@ function RegisterCard({
             />
           </label>
           <label className="auth-field">
-            <span>用户名</span>
+            <span>{t("auth.field.username")}</span>
             <input autoComplete="username" autoFocus={Boolean(initialInvite)} value={username} onChange={(e) => setUsername(e.target.value)} />
-            <small>3～32 位，字母、数字、点、下划线、连字符</small>
+            <small>{t("auth.field.username_hint")}</small>
           </label>
           <label className="auth-field">
-            <span>密码</span>
+            <span>{t("auth.field.password")}</span>
             <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            <small>8～128 位</small>
+            <small>{t("auth.field.password_hint", { min: MIN_PASSWORD_LENGTH, max: MAX_PASSWORD_LENGTH })}</small>
           </label>
           <label className="auth-field">
-            <span>确认密码</span>
+            <span>{t("auth.field.confirm_password")}</span>
             <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
           </label>
           {error ? <p className="auth-error" role="alert">{error}</p> : null}
-          <button type="submit" className="auth-primary" disabled={busy}>{busy ? "正在注册…" : "注册并登录"}</button>
+          <button type="submit" className="auth-primary" disabled={busy}>{busy ? t("auth.register.submitting") : t("auth.register.submit")}</button>
         </form>
         <p className="auth-foot">
-          已经有账号了？<button type="button" className="auth-link auth-inline-link" data-auth-action="to-login" onClick={onLogin}>去登录</button>
+          {t("auth.register.have_account")}<button type="button" className="auth-link auth-inline-link" data-auth-action="to-login" onClick={onLogin}>{t("auth.register.to_login")}</button>
         </p>
       </section>
     </main>
@@ -178,25 +183,27 @@ export function ForcedPasswordScreen({
   onDone?: () => void;
   onLogout?: () => void;
 }) {
+  const t = useT();
   return (
     <main className="auth-screen" data-auth-screen="change-password">
-      <section className="auth-card" aria-label="设置新密码">
-        <h1>设置新密码</h1>
-        <p className="auth-sub">{username ? `${username}，` : ""}管理员给的是初始密码，请先换成你自己的密码再开始使用。</p>
-        <ChangePasswordForm submit={submit} onDone={onDone} submitLabel="保存并进入" currentLabel="初始密码" />
-        <button type="button" className="auth-link" onClick={onLogout}>换一个账号登录</button>
+      <section className="auth-card" aria-label={t("auth.forced_password.title")}>
+        <h1>{t("auth.forced_password.title")}</h1>
+        <p className="auth-sub">{username ? t("auth.forced_password.subtitle_named", { username }) : t("auth.forced_password.subtitle")}</p>
+        <ChangePasswordForm submit={submit} onDone={onDone} submitLabel={t("auth.forced_password.submit")} currentLabel={t("auth.forced_password.initial_password")} />
+        <button type="button" className="auth-link" onClick={onLogout}>{t("auth.forced_password.switch_account")}</button>
       </section>
     </main>
   );
 }
 
 export function AuthErrorScreen({ message }: { message: string }) {
+  const t = useT();
   return (
     <main className="auth-screen" data-auth-screen="error">
-      <section className="auth-card" aria-label="出错了">
+      <section className="auth-card" aria-label={t("auth.error_screen.aria")}>
         <h1>RetainPDF</h1>
         <p className="auth-error" role="alert">{message}</p>
-        <button type="button" className="auth-primary" onClick={reload}>重试</button>
+        <button type="button" className="auth-primary" onClick={reload}>{t("auth.error_screen.retry")}</button>
       </section>
     </main>
   );

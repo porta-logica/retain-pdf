@@ -1,7 +1,7 @@
 // BookCard 纯格式化 helper（无 React 依赖）：日期与 memo 展示签名。
 // 从 BookCard.tsx 机械拆出，行为不变。
 
-import { formatZhDate } from "@/platform/utils/datetime.js";
+import { formatDate } from "@/platform/utils/datetime.js";
 import type { LibraryCardItem } from "../../../domain/types.js";
 
 export function formatCardDate(value: string | null | undefined) {
@@ -9,7 +9,7 @@ export function formatCardDate(value: string | null | undefined) {
   if (!raw) return "-";
   const parsed = new Date(raw);
   if (Number.isNaN(parsed.getTime())) return raw;
-  return formatZhDate(parsed);
+  return formatDate(parsed);
 }
 
 /**

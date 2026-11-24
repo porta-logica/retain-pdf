@@ -1,12 +1,12 @@
 // 页数账目列表（新的在前，后端最多给 50 条）：「账户」看自己的，「账号管理」看某个账号的。
 import type { PageLedgerEntry } from "@retainpdf/api/auth";
 import { buildDetailUrl } from "@/platform/navigation/pages.js";
-import { formatZhDateTime } from "@/platform/utils/datetime.js";
+import { formatDateTime } from "@/platform/utils/datetime.js";
 import { formatPageDelta, pageLedgerLabel, pageLedgerNote } from "../domain/page-ledger.js";
 
 function when(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : formatZhDateTime(date);
+  return Number.isNaN(date.getTime()) ? value : formatDateTime(date);
 }
 
 /** linkJobs：看别人的账目时传 false——管理员打不开别人的任务详情。 */

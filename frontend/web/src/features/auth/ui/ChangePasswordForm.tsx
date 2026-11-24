@@ -1,19 +1,24 @@
-// 改密码：账户页里用，首次登录强制改密码也用它。新密码至少 8 位；成功后其它设备的登录全部作废。
+// Change password: used on the account page and for the forced change on first sign-in. New passwords need at
+// least 8 characters; on success all sessions on other devices are signed out.
 import { useState, type FormEvent } from "react";
+import { useT } from "@/platform/i18n/index.js";
 import { changePassword } from "@retainpdf/api/auth";
 import { authErrorText, MIN_PASSWORD_LENGTH, passwordProblem } from "../domain/auth-errors.js";
 
 export function ChangePasswordForm({
   submit = changePassword,
   onDone,
-  submitLabel = "修改密码",
-  currentLabel = "当前密码",
+  submitLabel,
+  currentLabel,
 }: {
   submit?: (current: string, next: string) => Promise<unknown>;
   onDone?: () => void;
   submitLabel?: string;
   currentLabel?: string;
 }) {
+  const t = useT();
+  const submitText = submitLabel ?? t("auth.change_password.submit");
+  const currentText = currentLabel ?? t("auth.change_password.current_password");
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -24,7 +29,7 @@ export function ChangePasswordForm({
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setDone(false);
-    const problem = !current ? `请填${currentLabel}。` : passwordProblem(next, confirm);
+    const problem = !current ? t("auth.change_password.missing_current", { label: currentText }) : passwordProblem(next, confirm);
     if (problem) {
       setError(problem);
       return;
@@ -39,7 +44,7 @@ export function ChangePasswordForm({
       setDone(true);
       onDone?.();
     } catch (err) {
-      setError(authErrorText(err, "改密码失败，请确认当前密码是否正确。"));
+      setError(authErrorText(err, t("auth.change_password.failed")));
     } finally {
       setBusy(false);
     }
@@ -48,20 +53,20 @@ export function ChangePasswordForm({
   return (
     <form className="auth-form" onSubmit={onSubmit} data-auth-form="change-password">
       <label className="auth-field">
-        <span>{currentLabel}</span>
+        <span>{currentText}</span>
         <input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
       </label>
       <label className="auth-field">
-        <span>新密码（至少 {MIN_PASSWORD_LENGTH} 位）</span>
+        <span>{t("auth.change_password.new_password", { min: MIN_PASSWORD_LENGTH })}</span>
         <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
       </label>
       <label className="auth-field">
-        <span>再输一次新密码</span>
+        <span>{t("auth.change_password.confirm_new_password")}</span>
         <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
       </label>
       {error ? <p className="auth-error" role="alert">{error}</p> : null}
-      {done ? <p className="auth-ok">密码已修改，其它设备上的登录已全部退出。</p> : null}
-      <button type="submit" className="auth-primary" disabled={busy}>{busy ? "正在提交…" : submitLabel}</button>
+      {done ? <p className="auth-ok">{t("auth.change_password.done")}</p> : null}
+      <button type="submit" className="auth-primary" disabled={busy}>{busy ? t("auth.change_password.submitting") : submitText}</button>
     </form>
   );
 }

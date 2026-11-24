@@ -51,10 +51,10 @@ test("注册的纯逻辑：读 ?invite=、拼邀请链接、提交前检查；�
 
   const ok = { inviteCode: "abcd efgh jkmn", username: "li.ming", password: "secret-123", confirm: "secret-123" };
   assert.equal(registerProblem(ok), "");
-  assert.equal(registerProblem({ ...ok, inviteCode: " " }), "请填邀请码。");
-  assert.match(registerProblem({ ...ok, username: "a b" }), /3～32 位/);
-  assert.equal(registerProblem({ ...ok, password: "short", confirm: "short" }), "密码要 8～128 位。");
-  assert.equal(registerProblem({ ...ok, confirm: "secret-124" }), "两次输入的密码不一样。");
+  assert.equal(registerProblem({ ...ok, inviteCode: " " }), "Please enter the invite code.");
+  assert.match(registerProblem({ ...ok, username: "a b" }), /3–32 characters/);
+  assert.equal(registerProblem({ ...ok, password: "short", confirm: "short" }), "The password must have 8–128 characters.");
+  assert.equal(registerProblem({ ...ok, confirm: "secret-124" }), "The two passwords do not match.");
 
   assert.equal(inviteFormProblem(EMPTY_INVITE_FORM), null);
   assert.equal(inviteFormProblem({ ...EMPTY_INVITE_FORM, maxUses: "0" }).field, "max_uses");
@@ -98,7 +98,7 @@ test("登录页：「用邀请码注册」切到注册；带 ?invite= 直接注�
   typeInto(pass, "secret-123");
   typeInto(confirm, "secret-999");
   submit(form);
-  await waitFor(() => form.querySelector(".auth-error")?.textContent === "两次输入的密码不一样。", "两次密码不一致");
+  await waitFor(() => form.querySelector(".auth-error")?.textContent === "The two passwords do not match.", "两次密码不一致");
   assert.equal(calls.length, 0, "前端拦住，不发请求");
   typeInto(confirm, "secret-123");
   submit(form);

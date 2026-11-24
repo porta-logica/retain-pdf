@@ -34,13 +34,13 @@ test("登录：空着不发请求；密码错说人话；成功后回调", async
   const doc = dom.window.document;
   const form = await waitFor(() => doc.querySelector('[data-auth-form="login"]'), "登录表单");
   submit(dom, form);
-  await waitFor(() => doc.querySelector(".auth-error")?.textContent === "请填用户名和密码。", "空着提示");
+  await waitFor(() => doc.querySelector(".auth-error")?.textContent === "Please enter your username and password.", "空着提示");
   assert.equal(calls.length, 0);
   const [user, pass] = form.querySelectorAll("input");
   typeInto(dom, user, " li ");
   typeInto(dom, pass, "wrong-pass");
   submit(dom, form);
-  await waitFor(() => doc.querySelector(".auth-error")?.textContent === "用户名或密码不对。", "密码错");
+  await waitFor(() => doc.querySelector(".auth-error")?.textContent === "Incorrect username or password.", "密码错");
   assert.deepEqual(calls[0], ["li", "wrong-pass"], "用户名去掉首尾空格");
   ok = true;
   submit(dom, form);
@@ -64,7 +64,7 @@ test("强制改密码：新密码太短不发请求；两次一致才提交", as
   typeInto(dom, next, "short");
   typeInto(dom, confirm, "short");
   submit(dom, form);
-  await waitFor(() => /至少 8 位/.test(doc.querySelector(".auth-error")?.textContent || ""), "太短");
+  await waitFor(() => /at least 8 characters/.test(doc.querySelector(".auth-error")?.textContent || ""), "太短");
   typeInto(dom, next, "my-new-pass-1");
   typeInto(dom, confirm, "my-new-pass-1");
   submit(dom, form);
