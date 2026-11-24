@@ -85,3 +85,9 @@ research/
 # Rust 包里的源码目录也叫 data（任务包的 src/data/），上面的 data/ 规则会把它挡掉：改名、挪目录后 git add 不会自动加回来。
 !backend/packages/*/src/**/data/
 !backend/rendering-engine/engine/src/output/
+
+# appended by ps
+/translated/
+
+# IntelliJ IDEA project files
+/.idea/
