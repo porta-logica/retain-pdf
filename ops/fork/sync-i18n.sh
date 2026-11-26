@@ -40,7 +40,10 @@ fail() {
 trap 'fail "unexpected error at line $LINENO"' ERR
 
 echo "== retain-pdf main -> i18n sync, $(date -Is)"
-git -C "$REPO" fetch -q --prune origin || fail "git fetch origin failed (network or SSH agent?)"
+# Explicit refspecs: the clone may fetch only main from origin (single-branch), and origin/i18n must be current.
+git -C "$REPO" fetch -q origin \
+  +refs/heads/main:refs/remotes/origin/main +refs/heads/i18n:refs/remotes/origin/i18n \
+  || fail "git fetch origin failed (network or SSH agent?)"
 
 if git -C "$REPO" merge-base --is-ancestor "$UPSTREAM" "$BASE"; then
   echo "i18n already contains main ($(git -C "$REPO" rev-parse --short "$UPSTREAM")); nothing to do."
