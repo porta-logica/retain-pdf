@@ -96,7 +96,7 @@ Conflicted files: ${others[*]}
 
 Rules:
 - Upstream owns its code and docs: keep upstream's version of upstream content, then re-apply the fork's intent on top of it.
-- Fork-only content (translations/, ops/fork/, locales/, .github/workflows/fork-*, docs/ops/planning/i18n/, the English-language rules in CLAUDE.md) must be kept.
+- Fork-only content (translations/, ops/fork/, locales/, .github/workflows/fork-*, docs/ops/planning/i18n/, CLAUDE.fork.md and the single line `@CLAUDE.fork.md` near the top of CLAUDE.md) must be kept.
 - Use git show :1:<path> (base), :2:<path> (ours/fork), :3:<path> (theirs/upstream) and git log to understand both sides.
 - Edit only the conflicted files; remove every conflict marker. Do not run git add, git commit or any other command that changes state.
 - If a conflict cannot be resolved safely, leave its markers in place and say why.

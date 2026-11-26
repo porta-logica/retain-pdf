@@ -1,14 +1,16 @@
 # CLAUDE.md
 
+@CLAUDE.fork.md
+
 给在这个仓库里工作的 Claude Code 看的约定。项目怎么跑、目录怎么分，先看
 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [docs/README.md](docs/README.md)；通用的 AI 开发建议在
 [AI 辅助开发指南](docs/core/contributing/ai-development.md)。这里只写这些文档里没有、但每次都要守的规矩。
 
 ## 沟通
 
-- Reply in English; write code identifiers, commands and paths as-is. (This fork's owner works in English, 2026-11-24.)
-- Commit messages in English, prefixed `type(scope): summary`, e.g. `fix(translate): …`, `refactor(api): …`.
-  Merge commits: `Merge branch 'xxx': one sentence saying what it brings in`.
+- 回复一律用简体中文；代码标识符、命令、路径照原样写。
+- 提交信息用中文，前缀照 `类型(范围): 说明`，例如 `fix(translate): …`、`refactor(api): …`。
+  合并提交写 `Merge branch 'xxx'：一句话说清合进来什么`。
 
 ## 分工
 
