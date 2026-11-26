@@ -1,0 +1,11 @@
+# Fork only: weekly translation job, Tuesday after the Monday main -> i18n sync. Persistent=true catches up at login.
+[Unit]
+Description=Weekly retain-pdf translation update
+
+[Timer]
+OnCalendar=Tue *-*-* 07:30
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

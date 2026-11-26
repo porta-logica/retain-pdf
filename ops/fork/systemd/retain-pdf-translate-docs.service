@@ -1,0 +1,12 @@
+# Fork only: update stale and add new English translations on a translations/<date> branch (ops/fork/translate-docs.sh).
+[Unit]
+Description=retain-pdf: update English translations (translations branch)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/retain-pdf-translate-docs
+# Up to ~10 documents, one Claude call each.
+TimeoutStartSec=90min
+Nice=10
