@@ -10,7 +10,10 @@ mod upstream_codes;
 use anyhow::Result;
 pub use policy::{ModelConnection, ModelConnectionPolicy, ModelRequest};
 #[cfg(test)]
-pub use policy::{Deadlines, Message, Provider, Thinking};
+pub use policy::{
+    ContentPart, Deadlines, ImageUrl, Message, MessageContent, Provider, Thinking, MAX_IMAGE_BYTES,
+    MAX_REQUEST_IMAGES,
+};
 use retainpdf_data::db::{Db, ModelOperation, ModelReservation, ModelSessionConflict};
 use sha2::{Digest, Sha256};
 use std::{
@@ -28,8 +31,12 @@ pub enum ModelExecutorError {
     Unauthorized,
     #[error("invalid model request: {0}")]
     BadRequest(&'static str),
-    #[error("model operation conflict: {0}")]
-    Conflict(&'static str),
+    /// `reason` 是稳定的机器可读原因（进 `error.details.reason`），`message` 是给人看的说明。
+    #[error("model operation conflict: {message}")]
+    Conflict {
+        reason: &'static str,
+        message: &'static str,
+    },
     #[error("model executor internal failure: {0}")]
     Internal(&'static str),
 }
@@ -135,7 +142,10 @@ impl ModelExecutor {
             )
             .map_err(|error| {
                 if error.downcast_ref::<ModelSessionConflict>().is_some() {
-                    ModelExecutorError::Conflict("frozen model connection differs")
+                    ModelExecutorError::Conflict {
+                        reason: "model_connection_changed",
+                        message: "frozen model connection differs",
+                    }
                 } else {
                     ModelExecutorError::Internal("model session persistence failed")
                 }
@@ -242,15 +252,18 @@ impl ModelExecutor {
             .map_err(|_| ModelExecutorError::Internal("model operation reservation failed"))?
         {
             ModelReservation::Existing(operation) => Ok(operation),
-            ModelReservation::Conflict => Err(ModelExecutorError::Conflict(
-                "operation_id content conflict",
-            )),
-            ModelReservation::Paused => Err(ModelExecutorError::Conflict(
-                "job paused; manual recovery required",
-            )),
-            ModelReservation::UnitBudgetExceeded => {
-                Err(ModelExecutorError::Conflict("unit request budget exceeded"))
-            }
+            ModelReservation::Conflict => Err(ModelExecutorError::Conflict {
+                reason: "operation_content_changed",
+                message: "operation_id content conflict",
+            }),
+            ModelReservation::Paused => Err(ModelExecutorError::Conflict {
+                reason: "job_paused",
+                message: "job paused; manual recovery required",
+            }),
+            ModelReservation::UnitBudgetExceeded => Err(ModelExecutorError::Conflict {
+                reason: "unit_budget_exceeded",
+                message: "unit request budget exceeded",
+            }),
             ModelReservation::Created(operation) => {
                 let executor = self.clone();
                 let job = job.to_owned();

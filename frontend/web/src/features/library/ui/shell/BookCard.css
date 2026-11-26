@@ -1,6 +1,145 @@
-/* 书架卡右上角状态徽标：完整显示，禁止省略号。（BookCard）
+/* 书架卡（BookCard）和列表行（BookListRow）的形状：外框、封面、标题、按下、悬停。
+ * 每处三层取值 var(--卡片变量, var(--shape-全局旋钮, 现在的值))，不设变量时和以前逐像素一样；变量清单在
+ * packages/ui/src/theme/shape-tokens/book-card.ts。这些样式以前是 BookCard.tsx / BookListRow.tsx 里的 Tailwind 类，
+ * 现在值照搬 Tailwind 生成的（rounded-2xl = 1rem，bg-muted = --muted-surface，text-xs = .75rem/1.375，scale-[.99] 等）。
+ * 普通规则（不在 @layer 里）比 Tailwind 工具类优先，所以搬过来的属性不能在 tsx 里再留一份。
  *
- * @owns book-card */
+ * @owns book-card, book-list-row */
+
+/* 卡片根：默认无外框、无底、无内边距（0 / transparent），所以布局和以前一样；皮肤设 --shape-edge-* 或 --card-* 才出现外框。
+ * 按下：兜底 scale(0.99)（以前是 active:scale-[0.99]）。 */
+.book-card {
+  /* 给书签丝带、折角（::before / ::after）定位用；本身不改布局。 */
+  position: relative;
+  padding: var(--card-pad, 0);
+  border: var(--card-border-width, var(--shape-edge-width, 0)) solid var(--card-border-color, var(--shape-edge-color, transparent));
+  border-radius: var(--card-radius, var(--shape-radius-surface, 0));
+  background-color: var(--card-bg, transparent);
+  box-shadow: var(--card-shadow, var(--shape-shadow-md, none));
+  transition-property: transform, translate, scale, rotate, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: var(--ease-out);
+}
+
+.book-card:active {
+  transform: var(--card-press-transform, var(--shape-press-transform, scale(0.99)));
+  box-shadow: var(--card-press-shadow, var(--shape-press-shadow, var(--card-shadow, var(--shape-shadow-md, none))));
+}
+
+/* 封面区。box-shadow 里先放 Tailwind 的两个 ring 变量：批量选中时 tsx 仍挂 ring-2 ring-foreground ring-offset-2，
+ * 没挂时这两个变量是 0 0 transparent，和以前 Tailwind 自己拼出来的一样。皮肤想去掉封面阴影，写 0 0 transparent 而不是 none
+ * （none 放进逗号列表里无效，批量选中的环会丢）。 */
+.book-card-cover {
+  width: calc(100% - 2 * var(--card-cover-inset, 0px));
+  margin: var(--card-cover-inset, 0px);
+  border: var(--card-cover-border-width, 0) solid var(--card-cover-border-color, transparent);
+  border-radius: var(--card-cover-radius, var(--shape-radius-surface, 1rem));
+  background-color: var(--card-cover-bg, color-mix(in oklab, var(--muted-surface) 40%, transparent));
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 transparent),
+    var(--tw-ring-shadow, 0 0 transparent),
+    var(--card-cover-shadow, 0 2px 16px color-mix(in srgb, var(--shadow-color) 7%, transparent));
+  /* 倾斜：用独立属性 rotate，不和悬停的 translate 冲突；兜底 none，不设变量时不生成任何变换。 */
+  rotate: var(--card-tilt, none);
+  transition:
+    transform 200ms var(--ease-out),
+    rotate 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
+}
+
+/* 偶数位用相反方向（--card-tilt-alt，不设就和奇数位一样）。 */
+.book-card:nth-child(even) .book-card-cover {
+  rotate: var(--card-tilt-alt, var(--card-tilt, none));
+}
+
+/* 悬停/聚焦上移 + 加深阴影；批量模式不动（is-batch-mode）。悬停只在支持 hover 的设备上生效，和以前的 group-hover 一样。 */
+@media (hover: hover) {
+  .book-card:hover .book-card-cover:not(.is-batch-mode) {
+    translate: var(--card-hover-translate, 0 -0.125rem);
+    rotate: var(--card-tilt-hover, var(--card-tilt, none));
+    box-shadow: var(--card-cover-hover-shadow, 0 8px 28px color-mix(in srgb, var(--shadow-color) 12%, transparent));
+  }
+
+  .book-card:nth-child(even):hover .book-card-cover:not(.is-batch-mode) {
+    rotate: var(--card-tilt-hover, var(--card-tilt-alt, var(--card-tilt, none)));
+  }
+}
+
+.book-card:focus-within .book-card-cover:not(.is-batch-mode) {
+  translate: var(--card-hover-translate, 0 -0.125rem);
+  rotate: var(--card-tilt-hover, var(--card-tilt, none));
+  box-shadow: var(--card-cover-hover-shadow, 0 8px 28px color-mix(in srgb, var(--shadow-color) 12%, transparent));
+}
+
+.book-card:nth-child(even):focus-within .book-card-cover:not(.is-batch-mode) {
+  rotate: var(--card-tilt-hover, var(--card-tilt-alt, var(--card-tilt, none)));
+}
+
+/* 书脊折痕：封面左侧一条竖向渐变（封面自己的 ::after，overflow:hidden 会裁在封面内）。宽度兜底 0，不设就不出现。
+ * 左缘最深，渐变到透明，再在 70% 处压一道细折线，像书打开处的凹痕。不挡点击；层级低于状态徽标（z-10）和悬停按钮（z-4）。 */
+.book-card-cover::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--card-spine-width, 0px);
+  background: linear-gradient(
+    90deg,
+    var(--card-spine-color, transparent) 0%,
+    transparent 62%,
+    color-mix(in srgb, var(--card-spine-color, transparent) 55%, transparent) 70%,
+    transparent 78%
+  );
+  pointer-events: none;
+}
+
+/* 标题区 */
+.book-card-body {
+  margin-top: var(--card-body-gap, 0.5rem);
+  padding: var(--card-body-pad, 0);
+}
+
+.book-card-title {
+  font-family: var(--card-title-font, var(--shape-heading-font, inherit));
+  font-size: var(--card-title-size, 0.75rem);
+  font-weight: var(--card-title-weight, var(--shape-heading-weight, 600));
+  line-height: var(--card-title-leading, 1.375);
+}
+
+.book-card-meta {
+  font-size: var(--card-meta-size, 10px);
+}
+
+/* 列表行：外框、圆角、阴影、悬停底色、按下。圆角兜底 1rem（以前的 rounded-2xl）。 */
+.book-list-row {
+  border: var(--listrow-border-width, var(--shape-edge-width, 0)) solid var(--listrow-border-color, var(--shape-edge-color, transparent));
+  border-radius: var(--listrow-radius, var(--shape-radius-surface, 1rem));
+  background-color: var(--listrow-bg, transparent);
+  box-shadow: var(--listrow-shadow, var(--shape-shadow-sm, 0 1px 0 color-mix(in srgb, var(--shadow-color) 4%, transparent)));
+}
+
+@media (hover: hover) {
+  .book-list-row:hover {
+    background-color: var(--listrow-hover-bg, color-mix(in oklab, var(--muted-surface) 45%, transparent));
+  }
+}
+
+.book-list-row:active {
+  transform: var(--listrow-press-transform, var(--shape-press-transform, scale(0.99)));
+  box-shadow: var(--listrow-press-shadow, var(--shape-press-shadow, var(--listrow-shadow, var(--shape-shadow-sm, 0 1px 0 color-mix(in srgb, var(--shadow-color) 4%, transparent)))));
+}
+
+/* 列表行左侧的小封面（以前的 rounded-xl = calc(var(--radius) + 4px)、bg-paper）。ring 变量同上。 */
+.book-list-row-cover {
+  border-radius: var(--listrow-cover-radius, var(--shape-radius-surface, calc(var(--radius) + 4px)));
+  background-color: var(--listrow-cover-bg, var(--paper));
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 transparent),
+    var(--tw-ring-shadow, 0 0 transparent),
+    var(--listrow-cover-shadow, 0 2px 10px color-mix(in srgb, var(--shadow-color) 6%, transparent));
+}
 
 /* 书架卡右上角徽标：完整显示「已翻译/馆藏/失败」，禁止省略号 */
 .book-card-status-badge {
@@ -15,4 +154,62 @@
   text-overflow: clip !important;
   white-space: nowrap !important;
   flex-shrink: 0;
+}
+
+/* —— 装饰位（主题完全可自定义第 3 步）——
+ * 都画在卡片根的伪元素上，不加 DOM、不占位；默认不显示，皮肤设变量才出现，现有皮肤观感不变。
+ * 书签丝带：只挂在「在读」的书上（data-reading-status="reading"），表示正在读。
+ * 折角：每张卡右下角一个三角，纯装饰。 */
+.book-card[data-reading-status="reading"]::before {
+  content: "";
+  display: var(--card-ribbon-display, none);
+  position: absolute;
+  z-index: 3;
+  top: var(--card-ribbon-top, -3px);
+  right: var(--card-ribbon-right, 12px);
+  /* 右上角有「存档」等状态角标，会和丝带叠在一起；皮肤可以把丝带挪到左边：--card-ribbon-left 设值、--card-ribbon-right 设 auto */
+  left: var(--card-ribbon-left, auto);
+  width: var(--card-ribbon-width, 14px);
+  height: var(--card-ribbon-height, 26px);
+  background: var(--card-ribbon-color, var(--accent));
+  /* 下边剪出一个燕尾缺口 */
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - var(--card-ribbon-notch, 6px)), 0 100%);
+  filter: var(--card-ribbon-filter, none);
+  pointer-events: none;
+}
+
+.book-card::after {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  right: var(--card-fold-offset, 0px);
+  bottom: var(--card-fold-offset, 0px);
+  width: var(--card-fold-size, 0px);
+  height: var(--card-fold-size, 0px);
+  /* 右下角的三角：左上半透明，右下半上色，像纸角往里折了一下 */
+  background: linear-gradient(315deg, var(--card-fold-color, var(--accent)) 50%, transparent 50%);
+  pointer-events: none;
+}
+
+/* —— 搁板 ——
+ * 网格是扁平的、没有「行」，所以每张卡在标题区的 ::before 上画一段板，左右各多出半个列间距，相邻的卡拼成整行连续的板。
+ * 标题区不是定位元素，板按卡片根（position: relative）定位：卡片根有描边时，定位基准是内边距框，所以左右、上沿要补上描边粗细。
+ * 板在书卡下方（top: 100% 起算 + --shelf-offset），不占位、不挡点击；板的层级是自动的（不用负 z-index，
+ * 否则会被纸台的底色盖住）。--shelf-offset 取负数时板会盖住书卡底部。
+ * 想让同一行的板对齐到一条线：皮肤把网格的 --grid-align 设成 stretch，每张卡就拉到同高。
+ * 一行里最后几张不满时，板只画到最后一张卡为止；皮肤想让板顶到边，可以设 --grid-pad-x 给网格两侧留出板探出去的空间。 */
+.book-card-body::before {
+  content: "";
+  display: var(--shelf-display, none);
+  position: absolute;
+  pointer-events: none;
+  /* 参与 calc，所以描边粗细要带单位（0px，不是 0） */
+  --shelf-bw: var(--card-border-width, var(--shape-edge-width, 0px));
+  left: calc(-0.5 * var(--grid-gap-x, 32px) - var(--shelf-bw));
+  top: calc(100% + var(--shelf-bw) + var(--shelf-offset, 0px));
+  width: calc(100% + var(--grid-gap-x, 32px) + 2 * var(--shelf-bw));
+  height: var(--shelf-height, 10px);
+  background: var(--shelf-color, var(--muted-surface));
+  border-top: var(--shelf-edge-width, 2px) solid var(--shelf-edge-color, transparent);
+  box-shadow: var(--shelf-shadow, none);
 }

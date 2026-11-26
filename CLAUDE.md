@@ -18,15 +18,18 @@
 
 ## 分支、合并、推送
 
-- 不直接在 `main` 上开发。每件事开一个分支，用 worktree 做，做完留着等确认；只改文档的小事（README 之类）在主检出上切分支就行。
+- 不直接在 `main` 上开发。每件事开一个分支；只改文档的小事（README 之类）在主检出上切分支就行。
+- 后端的代码分支都在**一个固定的后端 worktree**（`../retain-pdf-backend`）里做，做完一件推上去，在同一个目录里切到下一件的分支，
+  编译缓存（它自己的 `target/`）一直留着；不再一件事建一个新 worktree（2026-11-24 用户定）。主检出留给合并、推送和小文档，
+  前端会话也在主检出里合并，不要在主检出上停着做代码分支。要同时开两件后端的事才另建 worktree，并给它单独的 `CARGO_TARGET_DIR`。
 - 分支做完**推到 GitHub、开草稿 PR**（`gh pr create --draft`），让 CI 跑合并前检查（见下一节）。推分支、开 PR 不用等用户说"推送"，
   没合的分支在公开仓库里能看到，不用顾虑（2026-11-23 用户定）。
 - 用户说 **"合"** 才在本地合进 `main`；说 **"推送"** 才 push `main`、打 tag。每次确认只管那一次，不顺延到下一次。
 - 推送 `main` 后，已合进去的 PR 会自动变成已合并，再删掉它的远程分支（`git push origin --delete <分支>`）；
   不合了的分支关掉 PR、删远程分支。
 - 推送后跑 `gh run list --limit 8`，有红的要报出来，不能当作做完。
-- 改了接口行为、事件、数据库结构、产物结构，文档在**同一个分支**里一起改（`docs/api/`、`docs/core/api/`、
-  `backend/api/docs/api-spec/` 等）。
+- 改了接口行为、事件、数据库结构、产物结构，文档在**同一个分支**里一起改：对外接口用法以 `docs/api/` 为准（唯一的对外接口说明），
+  内部设计（架构、实现思路）改 `docs/core/api/`；`backend/api/docs/api-spec/`、`backend/api/API_SPEC.md` 不再写内容（2026-11-24）。
 
 ## 合并前必须跑的检查
 
@@ -62,6 +65,20 @@ cargo test --workspace   # 和 CI 一样跑全部 Rust 包；以前列的 16 个
 - 改了翻译 agent 包 `backend/translation-agent/`：跑 `python -m pytest backend/translation-agent/tests`，以及测试系统的
   `backend/pipeline/devtools/tests/agent_lab`（它调这个包）。核心 `retainpdf_translation_agent` 只许用标准库，测试里钉着；
   接线 `retainpdf_translation_agent_engine` 依赖翻译包，它的测试在翻译测试里（`test_agent_flow.py`、`test_agent_openai.py`），跑翻译测试。
+- 改了表格 agent 包 `backend/table-agent/`：跑 `python -m pytest backend/table-agent/tests`（核心只许用标准库、提示词一字不改都钉着；
+  接线和底座取 JSON 的结果一致也在里面），再跑翻译测试（表格翻译阶段 `tables_stage.py` 的测试在那里）。
+- 改了阅读页提问的自带 agent 包 `backend/ask-agent/`：跑 `python -m pytest backend/ask-agent/tests`（核心只许用标准库、系统提示词钉着；
+  三种协议的流式解析用假 HTTP，入口用本机假模型服务真起子进程）。后端的 ACP 桥（`retainpdf-providers` 的 `acp`）另跑 `cargo test -p retainpdf-providers acp`。
+- 改了「RetainPDF + pi」`backend/pi-agent/`（pi 扩展、包装脚本）：跑 `node --test backend/pi-agent/tests/`（读书工具和 Python 版 `tools.py`
+  同一套断言；`pi-acp.test.ts` 真起 pi-acp + 包装脚本 + pi、模型和后端是假的，本机没装 pi 就跳过，换 pi 版本用 `RETAIN_PI_TEST_PI=<pi>`），
+  再跑 `cargo test -p retainpdf-providers acp`（桥起它的那段在 `acp/pi.rs`）。改了 `backend/ask-agent` 的 `tools.py`、提示词，pi 扩展照搬的那份也跟着改、跑它。
+- 改了阅读页提问的互动块（OpenUI）：检查器包 `backend/openui-check/` 先 `npm ci --ignore-scripts --prefix backend/openui-check`
+  （`--ignore-scripts` 不能省：lang-core 的 postinstall 是安装统计）再 `npm test --prefix backend/openui-check`；三处工具（Python
+  `backend/ask-agent/retainpdf_ask_agent/openui.py`、pi `backend/pi-agent/extension/openui.ts`、`retainpdf mcp` 的 `backend/cli/src/cmd/mcp_openui.rs`）
+  回给模型的话一字一样，改一处三处都改，跑 ask-agent、pi-agent 的测试和 `cargo test -p retainpdf-cli mcp`、`cargo test -p retainpdf-providers acp`。
+  没装检查器的依赖时真起检查器的几条会跳过。`contracts/openui/` 的两个文件是前端生成的，后端不改。
+- 改了目录 agent 包 `backend/toc-agent/`：跑 `python -m pytest backend/toc-agent/tests`（核心只许用标准库、提示词和版本号钉着），
+  再跑翻译测试（定译接进翻译 `test_fixed_translations.py`、开关 `test_translation_toc_entries.py` 在那里）。
 - 跑不了的检查，在回复和合并说明里写明没跑、为什么。
 
 ## 本地环境的坑
@@ -90,7 +107,7 @@ cargo test --workspace   # 和 CI 一样跑全部 Rust 包；以前列的 16 个
   写明方法、地址、处理函数、多用户下谁能用（`public`/`signed`/`admin`/`closed`），`///` 写一句话说明，旧地址行尾写 `old "<新地址>"`。
   路由文件里直接写 `.route(` 会让测试红。接口目录（总目录 `docs/api/00-接口目录.md`，各组在 `docs/api/00-接口目录/` 下）和 `docs/routes.txt` 都从表生成（`UPDATE_ROUTES=1`）。
 - 每个接口写明谁负责、谁在用（2026-11-22）：表头 `owner: <领域>;`（8 个领域之一，个别条目行尾 `owner(…)` 另写），每条必写
-  `by(…)`：`web` 前端页面、`desktop` 桌面壳主进程、`worker` Python 流水线、`cli` 命令行、`ops` 运维调试、`multiuser` 只有已停的多用户版、
+  `by(…)`：`web` 前端页面、`desktop` 桌面壳主进程、`worker` Python 流水线、`cli` 命令行、`ops` 运维调试、`multiuser` 只有已停的多用户版、`agent` AI agent（**有运行时效果**：AI 专用密钥只能调标了它的接口）、
   `none` 还没有调用方。不写编译不过。说不出调用方就不加接口；后端先加、调用方随后接的写 `none`，并在交接记录里写清等谁接。
   登记的和实际调用对不对得上，用 `python3 ops/development/route_usage_report.py` 看（按接口计数在 `data/**/diagnostics/route-usage.json`）。
 - 加路由、加 service 前先读 `check_architecture.py` 的规则：处理函数文件（`src/routes/` 下）要 `use crate::services::…`，

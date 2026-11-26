@@ -30,12 +30,14 @@ pub(super) fn pipeline_source_root() -> PathBuf {
 }
 
 /// 修订写回的代码在翻译包里(`retainpdf_translation`),同样要钉到这棵源码树,
-/// 否则 worktree 里测的是主检出的旧代码。
+/// 否则 worktree 里测的是主检出的旧代码。底座包(`retainpdf_base`,原子写在那里)也一样。
 pub(super) fn python_path() -> String {
+    let backend = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     format!(
-        "{}:{}",
+        "{}:{}:{}",
         pipeline_source_root().display(),
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../translation").display()
+        backend.join("translation").display(),
+        backend.join("base").display()
     )
 }
 
@@ -337,21 +339,23 @@ async fn revision_writes_back_and_keeps_page_hash_and_checkpoint_consistent() {
 }
 
 #[tokio::test]
-async fn revision_rejected_by_validation_is_422_and_writes_nothing() {
-    let state = state_with_pipeline("translation-revision-422");
-    let translated = seed_committed_job(&state, "job-revision-422", JobStatusKind::Succeeded);
+async fn revision_rejected_by_validation_is_400_and_writes_nothing() {
+    let state = state_with_pipeline("translation-revision-rejected");
+    let translated = seed_committed_job(&state, "job-revision-rejected", JobStatusKind::Succeeded);
     let before = fs::read(translated.join("page-001-deepseek.json")).expect("page");
 
     let (status, payload) = patch_item(
         &state,
-        "job-revision-422",
+        "job-revision-rejected",
         ITEM_ID,
         json!({"translated_text": "谐振子 $x^2 是模型体系。", "source": "agent"}),
     )
     .await;
 
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{payload}");
+    // 2026-11-25 起 400（以前 422）；和请求体写错的 400 靠 error.code 区分（BAD_REQUEST / TRANSLATION_REVISION_REJECTED）。
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
     assert_eq!(payload["error"]["code"], "TRANSLATION_REVISION_REJECTED");
+    assert_eq!(payload["code"], "TRANSLATION_REVISION_REJECTED");
     let details = &payload["error"]["details"];
     assert_eq!(details["reason"], "validation_failed");
     assert_eq!(details["validation"]["passed"], false);
@@ -398,6 +402,36 @@ async fn stale_expected_generation_is_409_with_current_generation() {
     assert_eq!(payload["error"]["details"]["current_generation"], 7);
 }
 
+/// 带读到的旧译文写回（agent 用）：对得上照常写；期间被改过就 409 `text_mismatch`，带当前译文，不写。2026-11-25 起。
+#[tokio::test]
+async fn stale_expected_text_is_409_with_current_text() {
+    let state = state_with_pipeline("translation-revision-expected-text");
+    let translated = seed_committed_job(&state, "job-revision-expected-text", JobStatusKind::Succeeded);
+
+    let (status, payload) = patch_item(
+        &state,
+        "job-revision-expected-text",
+        ITEM_ID,
+        json!({"translated_text": REVISED_TEXT, "source": "agent", "expected_translated_text": ORIGINAL_TEXT}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{payload}");
+    assert_eq!(checkpoint(&translated)["generation"], 8);
+
+    let (status, payload) = patch_item(
+        &state,
+        "job-revision-expected-text",
+        ITEM_ID,
+        json!({"translated_text": "谐振子是又一个说法。", "source": "agent", "expected_translated_text": ORIGINAL_TEXT}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{payload}");
+    assert_eq!(payload["error"]["code"], "TRANSLATION_REVISION_CONFLICT");
+    assert_eq!(payload["error"]["details"]["reason"], "text_mismatch");
+    assert_eq!(payload["error"]["details"]["current_translated_text"], REVISED_TEXT);
+    assert_eq!(checkpoint(&translated)["generation"], 8);
+}
+
 #[tokio::test]
 async fn revision_request_shape_is_strict() {
     let state = state_with_pipeline("translation-revision-400");
@@ -407,11 +441,12 @@ async fn revision_request_shape_is_strict() {
         json!({"translated_text": REVISED_TEXT, "source": "robot"}),
         json!({"translated_text": REVISED_TEXT}),
     ] {
-        // 字段值或缺字段不合 schema 走 ApiJson 的统一 422(UNPROCESSABLE_ENTITY),和校验不过的
-        // TRANSLATION_REVISION_REJECTED 靠 error.code 区分。
+        // 字段值或缺字段不合 schema 走 ApiJson 的统一 400(BAD_REQUEST + reason schema_mismatch,
+        // 2026-11-24 以前是 422),和校验不过的 400 TRANSLATION_REVISION_REJECTED 靠 error.code 区分。
         let (status, payload) = patch_item(&state, "job-revision-400", ITEM_ID, body).await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{payload}");
-        assert_eq!(payload["error"]["code"], "UNPROCESSABLE_ENTITY");
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
+        assert_eq!(payload["error"]["code"], "BAD_REQUEST");
+        assert_eq!(payload["error"]["details"]["reason"], "schema_mismatch");
     }
     // 不认识的字段是请求写错了：400，message 带字段名。
     let (status, payload) = patch_item(

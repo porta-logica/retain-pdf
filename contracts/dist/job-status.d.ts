@@ -172,6 +172,10 @@ export interface PublicTranslationInput {
      * TRANSLATION_TABLE_MODES：keep（表格保留原文）/ translate（表格 agent 翻表格）。
      */
     tables?: string;
+    /**
+     * TRANSLATION_TOC_MODES：agent（目录 agent，默认）/ translate（目录条目交给普通翻译）。
+     */
+    toc?: string;
     start_page: number;
     end_page: number;
     page_ranges: number[];
@@ -330,7 +334,6 @@ export interface JobActionsView {
     open_artifacts: ActionLinkView;
     cancel: ActionLinkView;
     resume: ActionLinkView1;
-    rerun: ActionLinkView2;
     download_pdf: ActionLinkView;
     open_markdown: ActionLinkView;
     open_markdown_raw: ActionLinkView;
@@ -346,15 +349,6 @@ export interface ActionLinkView {
  * 从断点续跑：POST /api/v1/jobs/:job_id/actions/resume。
  */
 export interface ActionLinkView1 {
-    enabled: boolean;
-    method: string;
-    path: string;
-    url: string;
-}
-/**
- * 旧名，和 resume 同值，地址是旧地址 actions/rerun。新代码读 resume。
- */
-export interface ActionLinkView2 {
     enabled: boolean;
     method: string;
     path: string;
@@ -742,6 +736,9 @@ export interface JobListInvocationSummaryView {
     stage_spec_count: number;
     unknown_count: number;
 }
+/**
+ * Query string of GET /api/v1/jobs. Unknown parameters are rejected with 400 (since 2026-11-25).
+ */
 export interface ListJobsQuery {
     /**
      * false 只读库里的任务摘要，不导入事件历史（首屏更快）；省略或 true 是完整的实时阶段。

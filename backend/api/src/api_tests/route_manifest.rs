@@ -26,7 +26,7 @@ fn manifest() -> String {
     let mut lines = vec![
         "# 全部 HTTP 路由：方法 路径 多用户下网站账号的访问策略（signed 登录可用 / admin 只给管理员 /".to_string(),
         "# closed 关闭 / public 不需要登录） 归哪个领域负责 by 谁在用（web 前端页面 / desktop 桌面壳 / worker Python 流水线 /".to_string(),
-        "# cli 命令行 / ops 运维调试 / multiuser 只有已停的多用户版 / none 还没有调用方）。".to_string(),
+        "# cli 命令行 / ops 运维调试 / multiuser 只有已停的多用户版 / agent AI 专用密钥能调 / none 还没有调用方）。".to_string(),
         "# 由 src/api_tests/route_manifest.rs 从接口登记表生成，不要手改：".to_string(),
         "#   UPDATE_ROUTES=1 cargo test -p retainpdf-api --lib route_manifest".to_string(),
     ];
@@ -111,6 +111,7 @@ const SECTIONS: &[(&str, &str, &str)] = &[
     ("router::backups", "21-备份和用量", "备份、模型用量"),
     ("router::model_requests", "22-内部-模型调用", "内部：模型调用"),
     ("router::metrics", "23-运维指标", "运维指标（Prometheus）"),
+    ("router::ai", "24-AI", "AI：阅读页提问的 agent 和 ACP 桥"),
 ];
 
 /// 这个路由文件归哪一组（`SECTIONS` 里的下标）。没登记返回 None。
@@ -132,8 +133,9 @@ const LEGEND: &[&str] = &[
     "`closed` 对网站账号关闭、`public` 不需要登录。单机版里所有接口都能用。",
     "",
     "「负责」是业务逻辑所在的领域包（改它、删它找谁）；「谁在用」：`web` 前端页面、`desktop` 桌面壳主进程、`worker` Python 流水线、",
-    "`cli` 命令行、`ops` 运维和调试、`multiuser` 只有已停的多用户网站版、`none` 还没有调用方。依据是代码里的调用和 rust_api 的",
-    "按接口计数（`backend/api/src/app/route_usage.rs`，用 `ops/development/route_usage_report.py` 看）。",
+    "`cli` 命令行、`ops` 运维和调试、`multiuser` 只有已停的多用户网站版、`agent` AI agent（`retainpdf mcp`）、`none` 还没有调用方。",
+    "依据是代码里的调用和 rust_api 的按接口计数（`backend/api/src/app/route_usage.rs`，用 `ops/development/route_usage_report.py` 看）。",
+    "`agent` 有运行时效果：AI 专用密钥（`RUST_API_AGENT_KEYS`）只能调写了 `agent` 的接口，别的回 403 `agent_key_not_allowed`。",
 ];
 
 const GENERATED_NOTE: [&str; 2] = [
@@ -393,6 +395,37 @@ fn every_router_file_has_a_directory_section() {
 }
 
 /// 多用户下谁能用直接查登记表（2026-10-17 前是账号包按地址前缀判断，这组用例从那里搬过来，结果一条没变）。
+/// AI 专用密钥能调的接口钉成一张表：加一条 `agent` 是放开权限，要有意为之、在这里看得见。
+#[test]
+fn agent_key_endpoints_are_pinned() {
+    let mut agent: Vec<String> = crate::app::registered_endpoints()
+        .iter()
+        .filter(|endpoint| endpoint.users.contains(&crate::app::endpoints::User::Agent))
+        .map(|endpoint| format!("{} {}", endpoint.method, endpoint.path))
+        .collect();
+    agent.sort();
+    assert_eq!(
+        agent,
+        [
+            "GET /api/v1/documents",
+            "GET /api/v1/documents/:document_id",
+            "GET /api/v1/documents/:document_id/files/pages/:page",
+            "GET /api/v1/jobs/:job_id/files/pages/:page",
+            // 2026-11-25 阅读页提问的自带 agent 读书（读一页、找字、目录都从这份来）
+            "GET /api/v1/jobs/:job_id/reader/regions",
+            "GET /api/v1/jobs/:job_id/translations/:item_id",
+            "GET /api/v1/search",
+            "PATCH /api/v1/jobs/:job_id/translations/:item_id",
+        ]
+    );
+    for line in &agent {
+        let (method, path) = line.split_once(' ').unwrap();
+        assert!(crate::app::endpoints::agent_allowed(method, path), "{line}");
+    }
+    assert!(!crate::app::endpoints::agent_allowed("GET", "/api/v1/jobs"));
+    assert!(!crate::app::endpoints::agent_allowed("DELETE", "/api/v1/documents/:document_id"));
+}
+
 #[test]
 fn route_policies_come_from_the_registry() {
     assert_eq!(route_policy("GET", "/api/v1/jobs"), RoutePolicy::Signed);
@@ -403,7 +436,6 @@ fn route_policies_come_from_the_registry() {
     assert_eq!(route_policy("GET", "/api/v1/jobs/:job_id/files/internal/*name"), RoutePolicy::AdminOnly);
     assert_eq!(route_policy("GET", "/api/v1/fonts"), RoutePolicy::Signed);
     assert_eq!(route_policy("POST", "/api/v1/providers/deepseek/balance"), RoutePolicy::AdminOnly);
-    assert_eq!(route_policy("POST", "/api/v1/fonts/upload"), RoutePolicy::AdminOnly);
     assert_eq!(route_policy("GET", "/api/v1/credentials/:credential_ref"), RoutePolicy::AdminOnly);
     assert_eq!(route_policy("POST", "/api/v1/backups"), RoutePolicy::AdminOnly);
     assert_eq!(route_policy("POST", "/api/v1/sync/run"), RoutePolicy::AdminOnly);
@@ -412,7 +444,7 @@ fn route_policies_come_from_the_registry() {
     assert_eq!(route_policy("GET", "/api/v1/jobsx"), RoutePolicy::Closed);
     // 地址登记过、方法没登记：取这个地址最严的一种（让网站账号照旧拿到 405，而不是 404）。
     assert_eq!(route_policy("DELETE", "/api/v1/jobs"), RoutePolicy::Signed);
-    assert_eq!(route_policy("GET", "/api/v1/fonts/upload"), RoutePolicy::AdminOnly);
+    assert_eq!(route_policy("GET", "/api/v1/providers/deepseek/balance"), RoutePolicy::AdminOnly);
     // 没登记的接口默认关闭。
     assert_eq!(route_policy("GET", "/api/v1/reports"), RoutePolicy::Closed);
 }

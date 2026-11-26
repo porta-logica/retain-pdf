@@ -257,6 +257,10 @@ export interface TranslationInput {
      * TRANSLATION_TABLE_MODES。表格翻译。keep：表格保留原文（默认）；translate：正文翻完后由表格 agent 逐张翻（先只翻有文字层的表），结果写 translated/tables.v1.json。阅读页的区块接口 reader/regions 用上了（整表翻了的表格块，translated.text 是整表译文 HTML）；译文 PDF 还没用上。
      */
     tables?: "keep" | "translate";
+    /**
+     * TRANSLATION_TOC_MODES。目录翻译。agent：目录 agent（默认，2026-11-25）——翻译一开头和普通翻译同步跑，整本书的目录（归一化时按文字层拆出的目录条目）一次翻完、逐条检查，译名也用在正文里同名的标题上，这些块不再单独翻，结果写 translated/toc-agent.v1.json；它失败照常翻。translate：目录条目和别的块一样交给普通翻译。
+     */
+    toc?: "translate" | "agent";
     start_page?: number;
     end_page?: number;
     /**
@@ -899,7 +903,6 @@ export interface JobActionsView {
     open_artifacts: ActionLinkView;
     cancel: ActionLinkView;
     resume: ActionLinkView1;
-    rerun: ActionLinkView2;
     download_pdf: ActionLinkView;
     open_markdown: ActionLinkView;
     open_markdown_raw: ActionLinkView;
@@ -915,15 +918,6 @@ export interface ActionLinkView {
  * 从断点续跑：POST /api/v1/jobs/:job_id/actions/resume。
  */
 export interface ActionLinkView1 {
-    enabled: boolean;
-    method: string;
-    path: string;
-    url: string;
-}
-/**
- * 旧名，和 resume 同值，地址是旧地址 actions/rerun。新代码读 resume。
- */
-export interface ActionLinkView2 {
     enabled: boolean;
     method: string;
     path: string;

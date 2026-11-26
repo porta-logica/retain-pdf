@@ -4,9 +4,13 @@ version = "2026.11.23"
 description = "RetainPDF backend Python workspace"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+  "retainpdf-ask-agent",
   "retainpdf-base",
   "retainpdf-math",
-  "retainpdf-pipeline",
+  # scan-ocr：扫描件的公式编号截图识别（rapidocr + onnxruntime），Docker、CI、开发环境都装
+  "retainpdf-pipeline[scan-ocr]",
+  "retainpdf-table-agent",
+  "retainpdf-toc-agent",
   "retainpdf-translation",
   "retainpdf-translation-agent",
   "retainpdf-translation-classic",
@@ -14,27 +18,36 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+  "retainpdf-ask-agent[test]",
   "retainpdf-base[test]",
   "retainpdf-math[test]",
   "retainpdf-pipeline[test]",
+  "retainpdf-table-agent[test]",
+  "retainpdf-toc-agent[test]",
   "retainpdf-translation[test]",
   "retainpdf-translation-agent[test]",
   "retainpdf-translation-classic[test]",
 ]
 
 [tool.uv.sources]
+retainpdf-ask-agent = { workspace = true }
 retainpdf-base = { workspace = true }
 retainpdf-math = { workspace = true }
 retainpdf-pipeline = { workspace = true }
+retainpdf-table-agent = { workspace = true }
+retainpdf-toc-agent = { workspace = true }
 retainpdf-translation = { workspace = true }
 retainpdf-translation-agent = { workspace = true }
 retainpdf-translation-classic = { workspace = true }
 
 [tool.uv.workspace]
 members = [
+  "ask-agent",
   "base",
   "math",
   "pipeline",
+  "table-agent",
+  "toc-agent",
   "translation",
   "translation-agent",
   "translation-classic",

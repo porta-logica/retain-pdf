@@ -3,7 +3,7 @@ use rusqlite::params;
 
 use crate::storage_paths::resolve_data_path;
 
-use super::crud::{delete_document_item, repair_wrong_document_cards};
+use super::crud::repair_wrong_document_cards;
 use super::search::fts_normalized_document;
 use super::sha256_hex;
 use crate::db::Db;
@@ -17,40 +17,29 @@ pub(super) fn run(db: &Db) -> Result<()> {
     Ok(())
 }
 
-/// 一次性清理孤儿文档:没有任何 upload 支撑(源文件早被 retention GC 掉)
-/// 的文档行,是永远打不开的僵尸卡。只清没有收藏引用的——有收藏的降级
-/// 数据保留给用户经 DELETE /documents/:id 显式处理,不无声销毁策展内容。
-/// root-cause(retention 不再删 document-backed upload)已堵住新孤儿产生,
-/// 此清理只处理历史遗留。
+/// 启动时**只数、不删**没有上传记录支撑的书（2026-11-26 改）。
+///
+/// 以前这里把它们硬删：外键级联带走书名、标签、合集、译文版本、问答记录，而且删除不在 `sync_apply_guard` 下，
+/// 会记进 `sync_dirty`、作为删除发给所有设备。同步时书（`document` 实体）和上传（`upload` 实体）是两个独立实体，
+/// 上传还在等文件时书已经写进库，这时重启就会把书和本机的问答一起删掉、再传染给别的设备（状态梳理 2026-11-26 复现，
+/// `tests/orphan_documents_survive_startup.rs`）。注释里说的「有收藏的不删」也早已失效（收藏表 v31 删了）。
+/// 原来要清的历史僵尸卡（源文件被 retention GC 掉的）根因早已堵住；剩下的交给用户经 `DELETE /documents/:id` 显式处理。
 fn cleanup_orphan_documents(db: &Db) -> Result<()> {
     let conn = db.connect()?;
-    let orphan_ids: Vec<String> = {
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT f.file_id FROM item_files f
-            WHERE NOT EXISTS (
-                SELECT 1 FROM uploads u
-                WHERE u.content_hash = f.file_id AND u.content_hash <> ''
-            )
-            "#,
-        )?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-    };
-    if orphan_ids.is_empty() {
-        return Ok(());
+    let orphans: i64 = conn.query_row(
+        r#"
+        SELECT COUNT(*) FROM item_files f
+        WHERE NOT EXISTS (
+            SELECT 1 FROM uploads u
+            WHERE u.content_hash = f.file_id AND u.content_hash <> ''
+        )
+        "#,
+        [],
+        |row| row.get(0),
+    )?;
+    if orphans > 0 {
+        tracing::info!("[library] {orphans} document(s) have no backing upload yet; kept (no startup deletion)");
     }
-    for document_id in &orphan_ids {
-        conn.execute(
-            "DELETE FROM blocks_fts WHERE document_id = ?1",
-            params![document_id],
-        )?;
-        delete_document_item(&conn, document_id)?;
-    }
-    tracing::info!(
-        "[library] cleaned {} orphan document(s) with no backing upload",
-        orphan_ids.len()
-    );
     Ok(())
 }
 
@@ -117,17 +106,26 @@ pub(super) fn fts_backfill_targets(db: &Db) -> Result<Vec<String>> {
         }
         let usable = match newer_job_id {
             None => true,
-            Some(job_id) => db
-                .get_job(&job_id)
-                .ok()
-                .and_then(|job| fts_normalized_document(&job, &db.data_root))
-                .is_some(),
+            Some(job_id) => {
+                db.get_job(&job_id).ok().and_then(|job| fts_normalized_document(&job, &db.data_root)).is_some()
+                    && newer_job_feeds_translation(db, &document_id, &job_id)
+            }
         };
         if usable {
             targets.push(document_id);
         }
     }
     Ok(targets)
+}
+
+/// 比索引新的任务会不会把译文放进索引：用户选了旧的译文版本时，更新的任务只提供原文，不算索引过期 ——
+/// 否则那本书每次启动都被判过期、重建出同样的结果。
+fn newer_job_feeds_translation(db: &Db, document_id: &str, job_id: &str) -> bool {
+    let Ok(jobs) = db.list_jobs_for_document(document_id, 500, 0) else { return true };
+    match db.fts_selection(document_id, &jobs) {
+        Ok(selection) => selection.uses_translation_of(job_id),
+        Err(_) => true,
+    }
 }
 
 fn backfill_upload_hashes(db: &Db) -> Result<()> {

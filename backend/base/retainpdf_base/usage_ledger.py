@@ -10,7 +10,7 @@
 - 那两份分别丢掉了缓存（精修）和思考（全部）；这里把服务商报的都留下。
 - 每行带阶段和模型，汇总时才能按阶段、按模型分。
 
-文件路径由执行进程经环境变量给（``RETAIN_USAGE_LEDGER``，见 Rust ``worker_process.rs``）；
+文件路径由执行进程经环境变量给（``RETAIN_USAGE_LEDGER``，Rust 起子进程统一用 ``storage_paths::usage_ledger_env``）；
 没给（命令行直接跑、单元测试）就不记。写入是一次 ``O_APPEND`` 的整行 write，多线程、
 多进程同时追加也不会交错。
 
@@ -50,8 +50,10 @@ _STAGE_PREFIXES: tuple[tuple[str, str], ...] = (
     ("agent-revise", "translation"),
     ("agent-read", "agent_reader"),
     ("agent-review", "agent_review"),
-    # 表格 agent（services/tables）
+    # 表格 agent（backend/table-agent，2026-11-25 以前在普通翻译包的 services/tables）
     ("table-translate", "table_translation"),
+    # 目录 agent（backend/toc-agent，2026-11-25）：目录条目的译名，和普通翻译同步跑
+    ("toc-translate", "toc_translation"),
     # OCR 识别（GLM-OCR 按 token 计费，2026-11-19 起记账）
     ("ocr ", "ocr"),
 )

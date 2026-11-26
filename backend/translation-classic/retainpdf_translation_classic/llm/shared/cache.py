@@ -4,12 +4,13 @@ import hashlib
 import json
 import os
 import re
-import tempfile
 import threading
 import time
 from pathlib import Path
 
 from retainpdf_base import paths
+from retainpdf_base.io import save_json_atomic
+from retainpdf_math.spans import has_balanced_inline_math_delimiters
 
 from retainpdf_translation.core.context import build_item_context
 from retainpdf_translation.core.engine_identity import _PROMPT_HASHES
@@ -30,7 +31,6 @@ from retainpdf_translation.llm.validation.placeholder_tokens import strip_placeh
 # file and os.replace is atomic, so concurrent writers cannot corrupt an entry.
 # The file and shard directory are fsynced because this cache is also the
 # finest-grained recovery layer between page checkpoint flushes.
-UNESCAPED_INLINE_DOLLAR_RE = re.compile(r"(?<!\\)\$")
 UNIT_CACHE_KEY_VERSION = "translation-unit-cache-v2"
 
 
@@ -61,10 +61,6 @@ def _strategy_signature(item: dict) -> str:
     if "[[FORMULA_" in source_text or "<f" in source_text:
         return FORMULA_SEGMENT_STRATEGY_VERSION
     return PLAIN_TEXT_STRATEGY_VERSION
-
-
-def _has_balanced_inline_math_delimiters(text: str) -> bool:
-    return len(UNESCAPED_INLINE_DOLLAR_RE.findall(text or "")) % 2 == 0
 
 
 # 两种形状都要认。模型把 token 当成数学符号时会把尖括号改写掉:实测译文里出现过
@@ -143,33 +139,7 @@ def _ensure_shard_dir(path: Path) -> None:
 
 def _atomic_write_cache_payload(path: Path, payload: dict[str, str]) -> None:
     _ensure_shard_dir(path)
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=path.parent,
-        text=True,
-    )
-    temp_path = Path(temp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_path, path)
-        try:
-            dir_fd = os.open(path.parent, os.O_RDONLY)
-        except OSError:
-            return
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
-    except Exception:
-        try:
-            temp_path.unlink()
-        except FileNotFoundError:
-            pass
-        raise
+    save_json_atomic(path, payload, indent=None)
 
 
 def _unit_cache_ttl_seconds() -> float:
@@ -251,7 +221,7 @@ def load_cached_translation(
     raw_translated_text = str(payload.get("translated_text", "") or "").strip()
     translated_text = extract_single_item_translation_text(raw_translated_text, str(item.get("item_id", "") or ""))
     translated_text, sanitized = _sanitize_cached_translation_text(translated_text)
-    if str(item.get("math_mode", "") or "").strip() == "direct_typst" and translated_text and not _has_balanced_inline_math_delimiters(translated_text):
+    if str(item.get("math_mode", "") or "").strip() == "direct_typst" and translated_text and not has_balanced_inline_math_delimiters(translated_text):
         return {}
     if has_unrestored_protected_tokens(translated_text):
         # 旧版本写进来的坏条目:当作未命中,重翻一次覆盖掉。

@@ -1,15 +1,15 @@
 //! 书（文档）：一本 PDF 是一本书，同一本书的多个任务挂在它下面；书本身的文件；全文检索。
 
 use crate::app::AppState;
-use crate::routes::{library_data, tags};
+use crate::routes::{ask_threads, library_data, tags};
 
 crate::endpoints! {
     state: AppState;
     owner: library;
     /// 书列表
-    GET "/api/v1/documents" => library_data::list_documents_route, signed by(web);
+    GET "/api/v1/documents" => library_data::list_documents_route, signed by(web, agent);
     /// 一本书
-    GET "/api/v1/documents/:document_id" => library_data::get_document_route, signed by(web);
+    GET "/api/v1/documents/:document_id" => library_data::get_document_route, signed by(web, agent);
     /// 改书的信息（书名、阅读状态）
     PATCH "/api/v1/documents/:document_id" => library_data::patch_document_route, signed by(web);
     /// 设书的标签（设成正好这几个）
@@ -31,19 +31,31 @@ crate::endpoints! {
     /// 取书的一个文件：source.pdf、cover.jpg、thumbnail.jpg
     GET "/api/v1/documents/:document_id/files/:name" => library_data::document_file_route, signed by(web);
     /// 原文某一页的预览图
-    GET "/api/v1/documents/:document_id/files/pages/:page" => library_data::document_page_file_route, signed by(none);
+    GET "/api/v1/documents/:document_id/files/pages/:page" => library_data::document_page_file_route, signed by(agent);
     /// 翻译这本书（建翻译任务，能复用已有的 OCR）
-    POST "/api/v1/documents/:document_id/translate" => library_data::translate_document_route, signed by(web);
+    POST "/api/v1/documents/:document_id/translate" => library_data::translate_document_route, signed by(web) [idempotent];
     /// 给这本书做 OCR
-    POST "/api/v1/documents/:document_id/ocr" => library_data::ocr_document_route, signed by(web);
+    POST "/api/v1/documents/:document_id/ocr" => library_data::ocr_document_route, signed by(web) [idempotent];
     /// 书的元信息建议（书名、作者……）
     GET "/api/v1/documents/:document_id/metadata-suggestions" => library_data::list_document_metadata_suggestions_route, signed by(web);
     /// 生成一条元信息建议
     POST "/api/v1/documents/:document_id/metadata-suggestions" => library_data::create_document_metadata_suggestion_route, signed by(web);
     /// 采用一条元信息建议
     POST "/api/v1/documents/:document_id/metadata-suggestions/:suggestion_id/apply" => library_data::apply_document_metadata_suggestion_route, signed by(web);
+    /// 阅读页提问的问答记录：书上问过的地方（不带问答正文，画「?」用）
+    GET "/api/v1/documents/:document_id/ask-threads" => ask_threads::list_ask_threads_route, signed by(web);
+    /// 记一次提问（锚点、agent，可以连开头几条问答一起）
+    POST "/api/v1/documents/:document_id/ask-threads" => ask_threads::create_ask_thread_route, signed by(web);
+    /// 一次提问连同问答
+    GET "/api/v1/documents/:document_id/ask-threads/:thread_id" => ask_threads::get_ask_thread_route, signed by(web);
+    /// 改一次提问：整份换掉问答（每答完一轮写一次）、换 agent 或 ACP 会话编号
+    PATCH "/api/v1/documents/:document_id/ask-threads/:thread_id" => ask_threads::patch_ask_thread_route, signed by(web);
+    /// 删一次提问
+    DELETE "/api/v1/documents/:document_id/ask-threads/:thread_id" => ask_threads::delete_ask_thread_route, signed by(web);
     /// 这本书的任务历史
     GET "/api/v1/documents/:document_id/jobs" => library_data::list_document_jobs_route, signed by(web);
     /// 全文检索
-    GET "/api/v1/search" => library_data::search_blocks_route, signed by(web);
+    GET "/api/v1/search" => library_data::search_blocks_route, signed by(web, agent);
+    /// 把书库导出成给 AI 读的 Markdown 文件夹（`<数据目录>/books/`）；多用户版不开
+    POST "/api/v1/book-folder/export" => library_data::export_book_folder_route, closed by(cli);
 }

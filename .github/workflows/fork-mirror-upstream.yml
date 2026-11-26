@@ -1,0 +1,78 @@
+# Fork only: keep `main` an exact mirror of upstream's `main` (fast-forward only).
+# Plan: docs/ops/planning/i18n/20261126-fork-maintenance.md (job 1).
+#
+# Scheduled workflows run from the repository's default branch, so the fork's default branch must be `i18n`
+# (this file never lands on `main`, which stays identical to upstream).
+#
+# Needs the secret MIRROR_TOKEN: a fine-grained personal access token for this fork with
+# "Contents: read and write" and "Workflows: read and write". The built-in GITHUB_TOKEN is not enough:
+# GitHub refuses pushes that change files under .github/workflows/ without the Workflows permission,
+# and upstream changes those files regularly.
+name: Fork mirror upstream main
+
+"on":
+  schedule:
+    - cron: "17 3 * * *" # daily, 03:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-mirror-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/wxyhgk/retain-pdf.git
+
+jobs:
+  mirror:
+    # Never run in the upstream repository itself.
+    if: github.repository != 'wxyhgk/retain-pdf'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check the token is configured
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "::error::Secret MIRROR_TOKEN is missing (see the comment at the top of this workflow)."
+            exit 1
+          fi
+
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          filter: blob:none
+          token: ${{ secrets.MIRROR_TOKEN }}
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --filter=blob:none upstream main
+
+      - name: Fast-forward main
+        run: |
+          local_head=$(git rev-parse origin/main)
+          upstream_head=$(git rev-parse upstream/main)
+          {
+            echo "## Mirror upstream main"
+            echo ""
+            echo "- fork main before: \`${local_head:0:9}\`"
+            echo "- upstream main: \`${upstream_head:0:9}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$local_head" = "$upstream_head" ]; then
+            echo "- result: already up to date" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! git merge-base --is-ancestor "$local_head" "$upstream_head"; then
+            echo "- result: **failed** — fork main has commits that are not upstream; it must stay a pure mirror" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::origin/main is not an ancestor of upstream/main; refusing to overwrite. Move the extra commits to a branch, then reset main to upstream/main."
+            exit 1
+          fi
+          count=$(git rev-list --count "$local_head..$upstream_head")
+          git push origin "$upstream_head:refs/heads/main"
+          echo "- result: fast-forwarded by $count commit(s)" >> "$GITHUB_STEP_SUMMARY"

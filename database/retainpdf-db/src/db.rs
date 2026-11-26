@@ -19,6 +19,8 @@ mod page_quota;
 mod platform_settings;
 #[path = "db/artifacts.rs"]
 mod artifacts;
+#[path = "db/ask_threads.rs"]
+mod ask_threads;
 #[path = "db/backup.rs"]
 pub mod backup;
 #[path = "db/collections.rs"]
@@ -35,6 +37,10 @@ mod event_projection_inputs;
 mod events;
 #[path = "db/glossaries.rs"]
 mod glossaries;
+#[path = "db/idempotency_keys.rs"]
+mod idempotency_keys;
+#[path = "db/job_derivations.rs"]
+mod job_derivations;
 #[path = "db/job_writes.rs"]
 mod job_writes;
 #[path = "db/jobs.rs"]
@@ -73,9 +79,12 @@ pub use admin_users::{OwnerJobRow, UserListPage, UserListQuery, UserListRow, Use
 pub use invites::{InviteRecord, InviteUnavailable, InviteUser};
 pub use ownership::OwnedKind;
 pub use platform_settings::PlatformSettingsRecord;
-pub use documents::DocumentListFilter;
+pub use documents::{DocumentChangeStamp, DocumentListFilter};
 pub use tags::tag_id_for_name;
 pub use translation_versions::TranslationVersionRecord;
+pub use ask_threads::{
+    AskAnchorRecord, AskMessageRecord, AskPoint, AskThreadChanges, AskThreadCreated, AskThreadRecord, NewAskThread,
+};
 pub use page_quota::{
     BillingSource, PageBalanceWouldGoNegative, PageChargeRecord, PageLedgerEntry, PageReservation,
 };
@@ -150,6 +159,10 @@ pub use event_feed::{
 };
 pub use event_projection_inputs::EventProjectionInput;
 pub use job_writes::NewRunWrite;
+pub use idempotency_keys::{
+    IdempotencyClaim, IdempotencyFingerprint, IdempotencyScope, StoredIdempotentResponse,
+};
+pub use job_derivations::DerivedRunWrite;
 pub use jobs::JobListSelection;
 pub use maintenance::CompactReport;
 pub use usage_cache::{UsageCacheEntry, UsageRollupRow};

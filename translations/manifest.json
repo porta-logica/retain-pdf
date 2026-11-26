@@ -1,0 +1,58 @@
+{
+  "CLAUDE.md": {
+    "source_blob": "f5eca509bed8d6156436e49c901500c55acfebb9",
+    "translated": "2026-11-26"
+  },
+  "CONTRIBUTING.md": {
+    "source_blob": "95b2e419e184f7d36190b8d14a213bdc593843b6",
+    "translated": "2026-11-26"
+  },
+  "docs/README.md": {
+    "source_blob": "72b8a1ef44c01f4ab8226ef6e07b100ea7b60ca9",
+    "translated": "2026-11-26"
+  },
+  "docs/core/README.md": {
+    "source_blob": "ee990a8d052aa8e4059731975af242c3ef5269bf",
+    "translated": "2026-11-26"
+  },
+  "docs/core/contributing/README.md": {
+    "source_blob": "7012d82af658a5a64fdaded289a9eb73179926c3",
+    "translated": "2026-11-26"
+  },
+  "docs/core/contributing/ai-development.md": {
+    "source_blob": "31b82e95fe1ab034089b49a84f1534fde8aec42b",
+    "translated": "2026-11-26"
+  },
+  "docs/core/contributing/backend-package.md": {
+    "source_blob": "160bbbb07c96e10202027edfbe00cd8331497825",
+    "translated": "2026-11-26"
+  },
+  "docs/core/contributing/backend.md": {
+    "source_blob": "a612991e5556d31ffa85323fd90a15279eb2d7e6",
+    "translated": "2026-11-26"
+  },
+  "docs/core/contributing/database.md": {
+    "source_blob": "255dea1183b6a344c5f31861acb89d2654f5e2be",
+    "translated": "2026-11-26"
+  },
+  "docs/core/contributing/frontend.md": {
+    "source_blob": "b60ad74cb264018bb32ebee6bb88ff17a217ca3a",
+    "translated": "2026-11-26"
+  },
+  "docs/core/contributing/process-and-style.md": {
+    "source_blob": "17dd0bcee8063a8d747fe9136a6404f845d796ea",
+    "translated": "2026-11-26"
+  },
+  "docs/core/contributing/python-pipeline.md": {
+    "source_blob": "8131d248a93ca5bb82793c6b3be4df4b94223337",
+    "translated": "2026-11-26"
+  },
+  "docs/core/contributing/testing.md": {
+    "source_blob": "a24f1289375ade263212a1ed22c744d1958982be",
+    "translated": "2026-11-26"
+  },
+  "docs/core/repository-layout.md": {
+    "source_blob": "8f2d585a33672e61ab6850bb5ac6f1b6010e3088",
+    "translated": "2026-11-26"
+  }
+}

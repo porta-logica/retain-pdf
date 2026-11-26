@@ -1,0 +1,12 @@
+# Fork only: merge upstream main into i18n on a sync/<date> branch (ops/fork/sync-i18n.sh).
+[Unit]
+Description=retain-pdf: merge upstream main into i18n (sync branch)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/retain-pdf-sync-i18n
+# Merges can take a while when Claude resolves conflicts.
+TimeoutStartSec=45min
+Nice=10

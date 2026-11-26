@@ -8,6 +8,8 @@
  * 本文件由 frontend/web/src/styles/entries/reader.css 代理导入。
  */
 @import "./core/tailwind-theme.css";
+/* 提问窗（@retainpdf/ask）的 Tailwind 部分：动画、流光、打字光标，并扫它的源码。 */
+@import "../../ask/styles/tailwind.css";
 
 @source "../src/**/*.{js,jsx,ts,tsx}";
 @source inline("progress-bar download-toast-card");
@@ -20,6 +22,10 @@
 @import "./base.css" layer(base);
 /* 出错兜底卡：阅读页没有引基础组件的样式，单独引这一份（见 packages/ui/styles/error-boundary.css）。 */
 @import "../../ui/styles/error-boundary.css" layer(pages);
+/* 装饰位（顶栏两端、弹窗角花）：显示规则在 @retainpdf/ui，变量由阅读页入口按装饰包注入。 */
+@import "../../ui/styles/ornaments.css" layer(pages);
+/* 组件库的下拉框、输入框（提问窗选 agent 用 Select）。 */
+@import "../../ui/styles/field.css" layer(pages);
 /* 阅读器也吃氛围底（PDF 区仍是自己的 --reader-page）— 仅 reader variant，无主页纸台 */
 @import "./core/ambient-surface-reader.css";
 
@@ -44,6 +50,11 @@
 @import "./issues.css" layer(pages);
 @import "./toolball.css" layer(pages);
 @import "./ink.css" layer(pages);
+/* 深色文档（书页黑底白字），放在 react-pdf / live-translation 后面盖住它们的底色 */
+@import "./zoom.css" layer(pages);
+@import "../../ask/styles/ask.css" layer(pages);
+@import "./ask-marks.css" layer(pages);
+@import "./doc-theme.css" layer(pages);
 /* Markdown 悬浮预览（含 MathJax） */
 @import "./markdown.css" layer(pages);
 @import "./markdown-blocks.css" layer(pages);

@@ -11,6 +11,18 @@ const outdir = path.join(frontendRoot, "dist");
 // --watch: esbuild context 增量重建(开发态:sourcemap 开、minify 关)
 const watchMode = process.argv.includes("--watch");
 
+// 提问窗互动块用的 OpenUI 组件库（@openuidev/intelligent-ui-library）的公式组件在 JS 里 import 了 KaTeX 的 CSS（带一堆字体）。
+// 我们的 KaTeX 样式和 woff2 字体由宿主托管（web/vendor/katex，提问窗打开时插 <link>），这里把这一处 import 当成空的。
+function ignoreKatexCssImportPlugin() {
+  return {
+    name: "ignore-katex-css-import",
+    setup(build) {
+      build.onResolve({ filter: /^katex\/dist\/katex(\.min)?\.css$/ }, (args) => ({ path: args.path, namespace: "ignored-katex-css" }));
+      build.onLoad({ filter: /.*/, namespace: "ignored-katex-css" }, () => ({ contents: "", loader: "js" }));
+    },
+  };
+}
+
 // 导入路径仍写 .js/.jsx（兼容存量 import），解析时映射到 .ts/.tsx。
 // TypeScript bundler 约定：import "./foo.js" 可对应 foo.ts。
 function jsToTsResolvePlugin() {
@@ -99,6 +111,12 @@ const PAGE_BUNDLES = [
     entry: path.join(frontendRoot, "src/app/editorial/entry.tsx"),
     out: "editorial.bundle",
   },
+  // 白板讲解板演示（学习系统，写死的讲解脚本）：whiteboard.html → src/app/whiteboard/entry.tsx → dist/whiteboard.bundle.js
+  {
+    name: "whiteboard",
+    entry: path.join(frontendRoot, "src/app/whiteboard/entry.tsx"),
+    out: "whiteboard.bundle",
+  },
 ];
 
 // mathjax-full/js/components/version.js 在未定义 PACKAGE_VERSION 时会
@@ -158,7 +176,7 @@ function bundleOptions({ entry, out }) {
     nodePaths: [path.join(frontendRoot, "node_modules")],
     // Reader 与其它 workspace 包一样只通过 package.json exports 消费；
     // 禁止在宿主构建里维护第二份 subpath→源码路径映射。
-    plugins: [jsToTsResolvePlugin()],
+    plugins: [jsToTsResolvePlugin(), ignoreKatexCssImportPlugin()],
     define: {
       PACKAGE_VERSION: JSON.stringify(resolveMathJaxPackageVersion()),
     },
@@ -168,6 +186,9 @@ function bundleOptions({ entry, out }) {
       ".tsx": "tsx",
     },
     minify: !watchMode,
+    // 压缩时保留函数、类名：React 报错的组件栈才看得出是哪个组件（桌面日志里排查 #185 这类问题用），
+    // 代价是包大一点（2026-11-24）。
+    keepNames: true,
     sourcemap: watchMode ? "inline" : false,
     logLevel: "info",
     legalComments: "none",

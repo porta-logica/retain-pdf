@@ -11,9 +11,14 @@
 - [阅读页改译文](./reader-block-edit.md) —— 在译文的框里直接改一段、看修订历史，攒几处再点一次重新排版
 - [阅读页对比版本、待处理](./reader-version-compare-issues.md) —— 左栏换成另一份译文逐段对着看、一键换用；底栏列出没翻成和质检挑出问题的段落，N 跳下一处
 - [上传弹窗（添加 PDF）](./upload-dialog.md) —— 标题、模式、普通 / Agent 翻译、流程条、拖放区，从上到下各是什么
+- [阅读页 Ctrl + 滚轮缩放、深色文档](./reader-zoom-dark.md) —— 手势中只做 CSS 预览、停手才重画，以鼠标为中心；书页黑底白字（底栏开关、D），画布反色、叠层换深色
 - [阅读页画笔](./reader-ink.md) —— 书页上右键出画笔小菜单（Shift+右键是浏览器菜单），P 进出画笔模式，笔迹按页按栏存在本机
+- [阅读页提问（ACP）](./reader-ask.md) —— 右键「在这里提问 / 问这段」、选中按 ?；问答窗是独立的包 `@retainpdf/ask`（assistant-ui，能整个交出去改），思考、工具调用、许可、计划、用量和速度；只说 ACP
+- [阅读页里的引用](./reader-xrefs.md) —— 「图 2.1」「式 (3.21)」悬停预览、点了跳过去、Alt+← 回原处；去处从图注和 `\tag` 认，认不出不标
+- [阅读页放大看一块](./reader-region-zoom.md) —— 悬停框「放大」、双击图片；这一块按高分辨率重画，对照时原文译文并排，← → 走同类的块
 - [阅读页悬停框的「改」「复制」放哪](./reader-hover-tools.md) —— 候选位置 + 碰撞检测，放框外不挡字，页边窄换图标版
 - [翻译编辑部可视化组件](./editorial-room.md) —— 翻译 agent 各角色分工的动画，editorial.v1 事件回放
+- [白板](../../../frontend/packages/whiteboard/README.md) —— 无限白板（卡片直接写 Markdown，公式好打）和讲解脚本播放器（模型写 JSON 讲解，一步步画）；演示页 `whiteboard.html`，还没接进阅读页，设计见 [学习系统](../../ops/planning/learning-system/README.md)
 - [历史前端优化记录](../../ops/reports/frontend-optimization-notes.md)
 - [React 迁移计划与审计](../../ops/planning/frontend-migration/)
 - [前端状态 Smoke 最新报告](../../ops/reports/frontend-status-smoke-latest.json)
@@ -26,6 +31,7 @@
 - `frontend/web/src/styles/`
 - `frontend/packages/reader/`
 - `frontend/packages/ui/`
+- `frontend/packages/whiteboard/`（白板讲解板）
 
 桌面端同步：
 

@@ -80,6 +80,10 @@ ROLE_FOOTNOTE = "footnote"
 ROLE_IMAGE_FOOTNOTE = "image_footnote"
 ROLE_TABLE_FOOTNOTE = "table_footnote"
 ROLE_TABLE_OF_CONTENTS = "table_of_contents"
+# 目录页按文字层拆出来的一条（只框标题，2026-11-25，pipeline 的 ocr/document_schema/toc_pages.py）
+ROLE_TOC_ENTRY = "toc_entry"
+# 目录条目的页码小块（定译就是页码本身，不发请求；排版时在原处重画，2026-11-25）
+ROLE_TOC_PAGE_LABEL = "toc_page_label"
 PRIMARY_TRANSLATABLE_STRUCTURE_ROLES = {
     ROLE_BODY,
     ROLE_ABSTRACT,
@@ -101,6 +105,8 @@ PRIMARY_TRANSLATABLE_STRUCTURE_ROLES = {
     ROLE_EXAMPLE_INTRO,
     ROLE_EXAMPLE_LINE,
     ROLE_TABLE_OF_CONTENTS,
+    ROLE_TOC_ENTRY,
+    ROLE_TOC_PAGE_LABEL,
 }
 DERIVED_STRUCTURE_ROLE_MAP = {
     "title": ROLE_TITLE,
@@ -145,6 +151,9 @@ _TRANSLATION_METADATA_BRIDGE_KEYS = {
     "provider_column_layout_mode",
     "column_index_guess",
     "provider_column_index_guess",
+    # 翻译那份的副本：定好的译文（目录 agent，2026-11-25）
+    "fixed_translation",
+    "fixed_translation_source",
 }
 
 

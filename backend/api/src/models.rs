@@ -25,7 +25,7 @@ pub mod api {
         EscalatedItemView, GlossaryUsageSummaryView, InvocationSummaryView, JobContractsView, JobDetailView, JobDiagnosticsView, JobEventFeedItem,
         JobEventListView, JobFailureBriefView,
         JobDeleteResultView, JobFailureDiagnosticView, JobFilesQuery, JobLinksView, JobListInvocationSummaryView,
-        JobListItemView, JobListView, JobProgressView, JobReportView, JobResumePlanView,
+        JobListItemView, JobListView, JobProgressView, JobResumePlanView,
         JobStageContractArtifactView, JobStageContractView, JobStageRuntimeView, JobStageSnapshotView,
         JobStageStateView, JobStagesView, JobSubmissionView, JobTimestampsView,
         LAST_REFINE_ESCALATED_LIMIT, LastRefineView, LayoutDocxQuery, ListDocumentJobsQuery,
@@ -48,7 +48,8 @@ pub mod api {
         summarize_list_invocation,
     };
     pub use retainpdf_library::{
-        AddCollectionDocumentsInput, ApplyDocumentMetadataSuggestionInput, CollectionListView,
+        AddCollectionDocumentsInput, ApplyDocumentMetadataSuggestionInput, BookFolderExportFailure,
+        BookFolderExportInput, BookFolderExportView, CollectionListView,
         CollectionMutationResult, CreateCollectionInput, CreateDocumentMetadataSuggestionInput,
         DeleteDocumentQuery, DocumentDeleteResultView, DocumentJobRequest, DocumentListView,
         DocumentMetadataEvidenceView, DocumentMetadataSuggestionApplyView,
@@ -58,6 +59,8 @@ pub mod api {
         DocumentReadingQuery, PatchTranslationVersionInput, SetCurrentTranslationVersionInput,
         TranslationVersionView, TranslationVersionsQuery, TranslationVersionsView,
         CreateTagInput, PatchTagInput, SetDocumentTagsInput, TagDeleteResultView, TagListView,
+        AskAnchorInput, AskMessageInput, AskPointInput, AskThreadDeleteResultView, AskThreadListView, AskThreadView,
+        CreateAskThreadInput, PatchAskThreadInput,
     };
     pub use retainpdf_platform::{BackupItemView, BackupRestoreView, BackupStatusView};
     pub use retainpdf_providers::{ProviderErrorCatalogueView, ProviderErrorCodesQuery};

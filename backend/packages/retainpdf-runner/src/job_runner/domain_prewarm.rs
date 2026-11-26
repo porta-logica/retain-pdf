@@ -17,8 +17,9 @@ use anyhow::{Context, Result};
 use tokio::process::{Child, Command};
 use tracing::{info, warn};
 
+use crate::config::WorkerProcessRuntimeConfig;
 use crate::models::domain::JobRuntimeState;
-use crate::storage_paths::JobPaths;
+use crate::storage_paths::{usage_ledger_env, JobPaths};
 use crate::worker_command::{build_worker_stage_command, WorkerStageCommand};
 
 use super::worker_process::resolve_translation_api_key;
@@ -35,9 +36,13 @@ pub(super) struct DomainPrewarmProcess {
 }
 
 /// 要不要拉起：只有学术模式（识别领域只在 sci 下做）、走 Python 请求、有翻译 key 的任务。
+///
+/// 选了页的不拉起（2026-11-26，S15）：预热读的是整份上传的前两页，翻译阶段读的是切出来的子 PDF 的前两页，
+/// 缓存按预览文本认，两边对不上，预热那一次请求白花钱，翻译照样自己再问一次。
 fn wanted(job: &JobRuntimeState) -> bool {
     job.request_payload.translation.mode == "sci"
         && job.request_payload.translation.execution_connection.is_none()
+        && !job.ocr_selects_pages()
 }
 
 /// 拉起识别领域进程；不需要或任何一步失败都返回 None（只记日志）。
@@ -91,25 +96,39 @@ fn spawn(
     let log_path = job_paths.logs_dir.join(DOMAIN_PREWARM_LOG_FILE_NAME);
     let log = File::create(&log_path)
         .with_context(|| format!("create domain prewarm log: {}", log_path.display()))?;
-    let mut command = Command::new(program);
+    let mut command = prewarm_command(&config, &job.job_id, program, args, &api_key);
     command
-        .args(args)
-        // 与阶段进程同样的运行环境；只带翻译 key，不带 OCR、审校的凭据。
-        .env("RUST_API_DATA_ROOT", config.data_root)
-        .env("RUST_API_OUTPUT_ROOT", config.output_root)
-        .env("OUTPUT_ROOT", config.output_root)
-        .env("PYTHONUNBUFFERED", "1")
-        .env("RETAIN_TRANSLATION_API_KEY", &api_key)
-        .env_remove("RETAIN_OCR_CREDENTIAL")
-        .current_dir(config.project_root)
-        .stdin(Stdio::null())
         .stdout(Stdio::from(log.try_clone()?))
-        .stderr(Stdio::from(log))
-        .kill_on_drop(true);
+        .stderr(Stdio::from(log));
     let child = command
         .spawn()
         .with_context(|| format!("spawn domain prewarm: {program}"))?;
     Ok(Some(child))
+}
+
+/// 与阶段进程同样的运行环境；只带翻译 key，不带 OCR、审校的凭据。它要调模型，所以带上用量台账（S57），
+/// 识别领域花的钱记进这个任务。
+fn prewarm_command(
+    config: &WorkerProcessRuntimeConfig<'_>,
+    job_id: &str,
+    program: &str,
+    args: &[String],
+    api_key: &str,
+) -> Command {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .env("RUST_API_DATA_ROOT", config.data_root)
+        .env("RUST_API_OUTPUT_ROOT", config.output_root)
+        .env("OUTPUT_ROOT", config.output_root)
+        .env("PYTHONUNBUFFERED", "1")
+        .envs(usage_ledger_env(config.output_root, job_id))
+        .env("RETAIN_TRANSLATION_API_KEY", api_key)
+        .env_remove("RETAIN_OCR_CREDENTIAL")
+        .current_dir(config.project_root)
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    command
 }
 
 impl DomainPrewarmProcess {
@@ -137,6 +156,33 @@ mod tests {
     use crate::job_runner::test_support::runtime_job;
 
     #[test]
+    fn prewarm_command_carries_the_usage_ledger_env() {
+        let config = WorkerProcessRuntimeConfig {
+            project_root: Path::new("/app"),
+            data_root: Path::new("/data"),
+            output_root: Path::new("/data/jobs"),
+            ocr_provider_config_path: Path::new("/data/ocr.json"),
+            worker_terminate_grace_secs: 1,
+            worker_terminate_poll_ms: 1,
+            worker_output_drain_secs: 1,
+            worker_max_runtime_secs: 1,
+        };
+        let command = prewarm_command(&config, "job-prewarm", "python3", &[], "sk-test");
+        let envs: std::collections::HashMap<_, _> = command
+            .as_std()
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(|value| value.to_owned())))
+            .collect();
+        for (name, value) in usage_ledger_env(config.output_root, "job-prewarm") {
+            assert_eq!(
+                envs.get(std::ffi::OsStr::new(name)),
+                Some(&Some(value)),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn only_sci_jobs_that_call_the_model_from_python_prewarm() {
         let mut job = runtime_job();
         job.request_payload.translation.mode = "sci".to_string();
@@ -153,5 +199,12 @@ mod tests {
             .unwrap(),
         );
         assert!(!wanted(&executor), "the Rust model executor owns model requests");
+
+        let mut selected = runtime_job();
+        selected.request_payload.translation.mode = "sci".to_string();
+        selected.request_payload.ocr.page_ranges = "3-5".to_string();
+        assert!(!wanted(&selected), "预热读整份上传，翻译读子 PDF，缓存对不上");
+        selected.request_payload.ocr.page_ranges = "all".to_string();
+        assert!(wanted(&selected));
     }
 }
