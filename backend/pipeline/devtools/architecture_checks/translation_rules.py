@@ -85,6 +85,8 @@ TRANSLATION_WORKFLOW_ALLOWED_FILES = {
     "translation_workflow.py",
     # 定好的译文（目录 agent 给的）：建计划时和领域识别同时算、写进块的元数据，两个引擎共用（2026-11-25），和 prepare.py 同一层
     "fixed_translations.py",
+    # 翻译期间收到 SIGTERM 先排空在途的模型请求再退出（状态管理 Z1，2026-11-26），execution.py 包在整个翻译外面
+    "shutdown_drain.py",
 }
 TRANSLATION_WORKFLOW_SUBPACKAGE_RULES: dict[str, tuple[str, ...]] = {
     "checkpoint": (
@@ -101,6 +103,8 @@ TRANSLATION_WORKFLOW_SUBPACKAGE_RULES: dict[str, tuple[str, ...]] = {
         # pending_item_count 却不为零把 validating 崩掉。方向是 workflow -> artifacts,
         # 与 phases 层已有的那条一致。
         "retainpdf_translation.artifacts",
+        # 断点、页快照的原子写和换名（Windows 退避重试）只有底座包一份（状态管理 Z5，2026-11-26）。
+        "retainpdf_base.io",
     ),
     "phases": (
         "retainpdf_translation.workflow.phases",
@@ -119,6 +123,8 @@ TRANSLATION_WORKFLOW_SUBPACKAGE_RULES: dict[str, tuple[str, ...]] = {
         "retainpdf_translation.services.policy",
         "retainpdf_translation.services.postprocess",
         "retainpdf_base.events",
+        # 接续复核 memo 的原子写（状态管理 Z5，2026-11-26）。
+        "retainpdf_base.io",
     ),
     "scheduling": (
         "retainpdf_translation.workflow.scheduling",

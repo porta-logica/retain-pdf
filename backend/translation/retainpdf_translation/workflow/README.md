@@ -8,6 +8,9 @@
 
 - `execution.py`
   对外请求对象和执行入口。
+- `shutdown_drain.py`
+  翻译期间收到 SIGTERM（运行时退出、取消、超时）先排空：不再派发新请求，在途的模型请求最多等 2 秒回来、写上终态再退出，
+  没回来的留成结果不明（2026-11-26，状态管理 Z1）。`execution.py` 包在整个翻译外面。
 - `execution_plan.py`
   根据 OCR JSON、策略配置、术语表、上下文和 provider 诊断配置生成不可变执行计划。
 - `execution_runner.py`
@@ -36,6 +39,11 @@
   队列分配、tail retry、失败兜底、页序、指标。`batch_runner.py` 用它跑顺序或并行的批次 worker。
 - `checkpoint/`
   断点续翻：身份、准备、续跑、提交前检查、存储。
+  续跑指纹（`identity.py`）只由输入决定（原文、页范围、模式、规则、术语表、模型、引擎），领域识别结果（`domain_context`）
+  和目录 agent 的定译不进指纹（2026-11-26）：它们是模型产出，第一次失败、下次成功或者换任务目录重跑都会变，以前一变就整本
+  作废重翻或者永远报 fingerprint mismatch。已有断点按旧算法再对一遍（`legacy_translation_identities`，猜几种旧的领域识别
+  结果和有没有定译），对上了照常续跑、改记新指纹。跨任务续跑真对不上要丢已译页时发一条 warning 级的阶段事件
+  （payload `resume_checkpoint_discarded`，带原因），不再只打一行 stdout。
 
 ## 其他文件
 

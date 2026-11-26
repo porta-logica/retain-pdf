@@ -8,11 +8,11 @@
  * - 回答和工具调用里的页码能点（page-citations.ts、AskPageLink.tsx），点了交给宿主跳页。
  * 宿主给什么、能改什么：见包的 README.md。
  */
-import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from "react";
 import { Rnd } from "react-rnd";
 import { AssistantRuntimeProvider, makeAssistantDataUI, useLocalRuntime } from "@assistant-ui/react";
 
-import type { AskAgent, AskContext, AskMessage, AskPort } from "../contract.js";
+import type { AskAgent, AskConfigOption, AskContext, AskMessage, AskPort } from "../contract.js";
 import { toInitialMessages, toStoredMessages } from "../acp/messages.js";
 import { PermissionStore, createAcpChatAdapter } from "../acp/adapter.js";
 import { Thread } from "../ui/elements/thread.aui.js";
@@ -30,6 +30,10 @@ import {
 import { AskHeader, type AskWindowMode } from "./AskHeader.js";
 import { AskQuote } from "./AskQuote.js";
 import { AskPageContext, type AskPageJump } from "./AskPageLink.js";
+import { AskSendContext } from "./ask-send.js";
+import { AskAgentSettings, AskConfigContext, currentEffort, currentModelBrand, type AskConfigState } from "./AskModelPicker.js";
+import { BrandIcon, brandFor } from "./BrandIcon.js";
+import { loadDesiredConfig, saveDesiredConfig } from "./config-memory.js";
 
 const KATEX_LINK_ID = "retainpdf-katex-css";
 
@@ -125,16 +129,33 @@ export default function AskWindow({ port, context, onClose, onShowContext, initi
   }, [port]);
 
   const permissions = useMemo(() => new PermissionStore(), []);
+  // agent 的设置项（模型、思考强度……，ACP 的 configOptions）；用户选过的值按 agent 记在本机浏览器里，新会话再设一次。
+  const [config, setConfig] = useState<AskConfigOption[]>([]);
   const chat = useMemo(
     () => createAcpChatAdapter({
       port,
       permissions,
       getAgentId: () => live.current.agentId,
       getPreamble: () => live.current.context.preamble || "",
+      onConfig: setConfig,
+      getDesiredConfig: () => loadDesiredConfig(live.current.agentId),
     }),
     [port, permissions],
   );
   useEffect(() => () => chat.close(), [chat]);
+  // 选了 agent 就提前开会话：不用先问一句，就能看到它有哪些模型、思考强度。
+  useEffect(() => {
+    setConfig([]);
+    if (agentId) void chat.prepare();
+  }, [chat, agentId]);
+  const configState = useMemo<AskConfigState>(() => ({
+    options: config,
+    set: (configId, value) => {
+      saveDesiredConfig(live.current.agentId, configId, value);
+      setConfig((current) => current.map((option) => (option.id === configId ? { ...option, currentValue: value } : option)));
+      void chat.setConfig(configId, value).catch(() => {});
+    },
+  }), [config, chat]);
   // 之前的问答接着显示（agent 那边是新会话：出处和之前几轮会跟着下一问带过去，见 acp-adapter）。
   const [initial] = useState(() => toInitialMessages(initialMessages || []));
   // 输入框的「+」：贴图片（截图、扫描页、图表）一起问；发出去是 ACP 的 image 块（acp-adapter 的 imageBlocks）。
@@ -155,18 +176,20 @@ export default function AskWindow({ port, context, onClose, onShowContext, initi
     });
   }, [runtime]);
   const agentName = () => agents?.find((agent) => agent.id === live.current.agentId)?.name || "";
-  // 常问点一下直接发出去。
-  const send = (text: string) => runtime.thread.append({ role: "user", content: [{ type: "text", text }] });
+  // 替用户发一句：常问、互动块里的 @ToAssistant、「让它修」。
+  const send = useMemo(() => (text: string) => runtime.thread.append({ role: "user", content: [{ type: "text", text }] }), [runtime]);
   // Thread 要的几样（引用不变，免得它整个重画）。
   const threadComponents = useMemo(
-    () => ({ ToolFallback: ToolCard, ToolGroup: AskToolGroup, Indicator: Waiting, Welcome: makeWelcome(send), MessageFooter: makeMessageFooter(agentName) }),
+    () => ({ ToolFallback: ToolCard, ToolGroup: AskToolGroup, Indicator: Waiting, ComposerExtra: AskAgentSettings, Welcome: makeWelcome(send), MessageFooter: makeMessageFooter(agentName) }),
     [agents, runtime], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const pages = useMemo<AskPageJump | null>(() => (onJumpToPage ? { pageCount, jump: onJumpToPage } : null), [onJumpToPage, pageCount]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      // 开着弹层（选 agent、选模型、用量、更多设置）时 Esc 只关弹层，不关窗。
+      if (document.querySelector("[data-radix-popper-content-wrapper]")) return;
       const typing = (event.target as HTMLElement | null)?.closest?.("textarea, input, select");
       if (typing && `${(typing as HTMLTextAreaElement).value || ""}`.trim()) return;
       event.preventDefault();
@@ -187,6 +210,11 @@ export default function AskWindow({ port, context, onClose, onShowContext, initi
     return () => window.removeEventListener("resize", onResize);
   }, []);
   const rect = layoutFor(mode, float, dockWidth);
+  // 思考强度染输入框和周围（ask.css 读 --ask-effort-color、data-effort）；当前模型厂商的标志做聊天背景的水印。
+  const effort = currentEffort(config);
+  const currentAgent = agents?.find((agent) => agent.id === agentId);
+  const brand = currentModelBrand(config) || (currentAgent ? brandFor(currentAgent.id, currentAgent.name) : "");
+  const tint = (effort ? { "--ask-effort-color": effort.color } : {}) as CSSProperties;
 
   return (
     <Rnd
@@ -206,7 +234,7 @@ export default function AskWindow({ port, context, onClose, onShowContext, initi
         else setFloat({ x: position.x, y: position.y, width: element.offsetWidth, height: element.offsetHeight });
       }}
     >
-      <section className="ask-panel" role="dialog" aria-label="提问" data-mode={mode}>
+      <section className="ask-panel" role="dialog" aria-label="提问" data-mode={mode} data-effort={effort?.on ? "on" : "off"} style={tint}>
         <AskHeader
           context={context}
           agents={agents}
@@ -222,13 +250,22 @@ export default function AskWindow({ port, context, onClose, onShowContext, initi
           <AskQuote quote={context.quote} />
           {loadError ? <p className="ask-error">列不出能用的 agent：{loadError}</p> : null}
           <PermissionContext.Provider value={permissions}>
+            <AskSendContext.Provider value={send}>
+            <AskConfigContext.Provider value={configState}>
             <AssistantRuntimeProvider runtime={runtime}>
               <PlanDataUI />
               <SubagentDataUI />
               <div className="ask-thread">
+                {brand ? (
+                  <div className="ask-watermark" aria-hidden>
+                    <BrandIcon brand={brand} size={200} />
+                  </div>
+                ) : null}
                 <Thread components={threadComponents} autoFocus />
               </div>
             </AssistantRuntimeProvider>
+            </AskConfigContext.Provider>
+            </AskSendContext.Provider>
           </PermissionContext.Provider>
         </AskPageContext.Provider>
       </section>

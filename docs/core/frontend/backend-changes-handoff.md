@@ -12,6 +12,97 @@
 
 ---
 
+## 阅读页提问：自带 agent 报思考档位，会话里能改（feat/ask-thought-level）
+
+2026-11-26，只增不改，见 [阅读页提问](../../api/16-AI/01-阅读页提问.md) 的「思考强度：`configOptions` 和 `session/set_config_option`」
+和「RetainPDF + pi」的「思考强度」。握手参数、契约 `ai-agents.v1` 都没变（ACP 消息不在契约里）。
+
+- `retainpdf`、`retainpdf-pi` 的 `session/new` 结果都带 `configOptions`，只有一项 `{id: "thought_level", category: "thought_level", type: "select", currentValue, options: [{value, name}]}`，
+  `options` 是这个模型实际有的档位、从弱到强（按位置上色正好）。**没有 `category: "model"` 那一项**，模型照旧是前端合成的设置里存的连接，换模型带新握手参数重开会话。
+- `currentValue` 是握手的 `thinking` 换成的档位（换算写在接口文档里，和实际发的请求一致）。
+- `session/set_config_option(configId: "thought_level", value)` 只改下一问，回整份 `configOptions`；`value` 不在 `options` 里回 `-32602`。
+- 认不出的模型（不是 Claude、GPT，也不是 DashScope、DeepSeek、智谱的地址）不报 `configOptions`，前端照现在的做法不显示这一栏。
+
+**前端不用改**：`frontend/packages/ask/src/acp/adapter.ts` 现在的写法（收 `configOptions`、开会话后用 `set_config_option` 设回上次选的、
+不在 `options` 里的跳过、收 `config_option_update`）正好对上。要留意的几处：
+
+| 文件 | 现在 | 要注意 |
+|---|---|---|
+| `frontend/packages/ask/src/acp/config.ts`（读 `configOptions`） | 认 `value` / `name` / `description` | `retainpdf-pi` 的选项带 `description: null`（pi-acp 给的，桥不删）；`retainpdf` 的不带 `description` |
+| 同上 / 记住上次选的档位的地方 | 按 `id` 记一个值 | 两个 agent、不同模型的档位名不一样：Qwen、DeepSeek 在 `retainpdf` 里是 `off` / `on`，在 `retainpdf-pi` 里是 `off` / `high`；GPT-5 是 `minimal`…`high`，GPT-5.1 起是 `none`…`xhigh`。换了模型、值不在新 `options` 里就跳过（现在就是这样） |
+| 同上 | 收 `config_option_update` | `retainpdf` 不发这条（档位只在前端改时变，结果里已经是整份）；`retainpdf-pi` 每次改都会发一条（已去掉模型那项），另有旧写法 `current_mode_update`，不用管 |
+
+---
+
+## 重试时断点作废有一条事件（fix/regroup-followups）
+
+2026-11-26，只增不改，见 [翻译事件](../../api/04-翻译/07-翻译事件.md) 的「断点不能接着用、已译的页作废」。**前端不改也能用**：
+它是一条普通的进度事件，`message` 会照常显示。想醒目提示「这次是从头翻的」，读 `payload.observation.resume_checkpoint_discarded`
+（`source_attempt_id`、`reason`），不要按 `message` 关键词判断。
+
+---
+
+## 阅读页提问：回答里的互动块，后端给三类 agent 加 L0 和两个工具（feat/ask-openui）
+
+2026-11-26，只增不改，见 [阅读页提问](../../api/16-AI/01-阅读页提问.md) 的「回答里的互动块」，方案
+[互动块后端实现](../../ops/planning/reader-ask/20261126-互动块后端实现.md)。接口、握手参数、契约都没变；`contracts/openui/` 的两个文件照旧由前端生成、后端只读。
+**前端不改也能用**：自带的两个 agent 和本机 agent（经 `retainpdf mcp`）的系统提示词都带了 L0，回答里会出现 ```` ```openui-lang ```` 代码块，前端已经会画。
+
+### 桌面版（`frontend/desktop`）要做的
+
+不做时：桌面版里 `contracts/openui/` 找不到，互动块整个不开（没有 L0、没有工具，回答照旧）；找得到说明文件但没有检查器或 Node 时，
+`openui_spec` 能用，`openui_check` 回「检查器用不了」，模型照说明写、不检查。
+
+| 文件 | 旧写法 | 新写法 |
+|---|---|---|
+| `frontend/desktop/scripts/prepare-app.mjs`（拷 rpr 引擎那一段旁边） | 不带 | 把仓库的 `contracts/openui/ask-openui-prompt.v1.json`、`ask-openui-library.v1.json` 拷到 `path.join(outputBackendRoot, "contracts", "openui")` |
+| 同上 | 不带 | 带检查器：在 `backend/openui-check` 里 `npm ci --omit=dev --ignore-scripts`（环境变量加 `OPENUI_TELEMETRY_DISABLED=1`、`DO_NOT_TRACK=1`；**`--ignore-scripts` 不能省**，lang-core 的 postinstall 是安装统计），把 `bin/`、`lib/`、`node_modules/`、`package.json` 拷到 `path.join(outputBackendRoot, "openui-check")`，再删掉 `node_modules/.bin`（和 rpr 引擎一样，免得签名遍历撞断链）。依赖都是纯 JS（lang-core 1.2.0、ci-info、zod），和平台无关 |
+| `frontend/desktop/src/main/backend-env.js` 的 `buildBackendEnv` | 没有 | 加 `RUST_API_OPENUI_DIR: path.join(backendRoot, "contracts", "openui")`、`RUST_API_OPENUI_CHECK_DIR: path.join(backendRoot, "openui-check")`（桌面版的项目根就是 `backendRoot`，后端的默认位置 `<项目根>/backend/openui-check` 对不上，要显式给） |
+| 同上 | （`RUST_API_NODE_DIR` 见上一节「代装本机 agent」） | 检查器用同一个 Node：先找 `RUST_API_NODE_DIR`，再找 PATH。Node ≥ 20 就行。用 Electron 当 node 的那种小脚本（`ELECTRON_RUN_AS_NODE=1 exec <Electron> "$@"`）也能跑 |
+
+- Node（2026-11-26 补，fix/openui-node-fallback）：桌面版不用为检查器另带 Node。后端找 node 的顺序是 `RUST_API_NODE_DIR` → `RETAINPDF_NODE_BIN`（桌面版已经指向 Electron 本体，排版引擎、Word 导出同一个变量）→ PATH；三处起检查器时都带 `ELECTRON_RUN_AS_NODE=1`。
+
+### 前端页面要做的（可选）
+
+| 文件 | 旧写法 | 新写法 |
+|---|---|---|
+| 提问窗的工具卡片（`frontend/packages/ask`） | 只有读书的工具 | 多两种卡片：`retainpdf` 的 `title` 是「取互动块说明：core、components:inputs」（`kind: "read"`）和「检查互动块」（`kind: "other"`），摘要是「core、components:inputs（约 1874 token）」「没问题」「2 处问题：unknown-component、type-mismatch」；`retainpdf-pi` 的 `title` 是工具名 `openui_spec` / `openui_check`；本机 agent 由它自己定（Claude Code 一般是 `mcp__retainpdf__openui_check`）。可以折叠成一行或不显示 |
+| 用量那一行（可选） | — | `_meta.retainpdf.usage.openui`：`spec_calls`、`sections`、`check_calls`、`check_problems`、`refused`（这一问调过互动块的工具才有） |
+| 「让它修」 | — | 照旧把解析错误作为下一问发回去就行；自带 agent 每一问取说明、检查的额度重算（取 2 次、查 3 次），下一问模型会重新取说明再改 |
+
+## 扫描件的行间公式编号：CPU 小模型截图识别（feat/formula-number-ocr-crop）
+
+2026-11-26，只增不改，方案 [扫描件公式编号小模型](../../ops/planning/ocr-normalization/20261126-扫描件公式编号小模型.md)。
+document.v1 的 `content.formula_number.source` 多一个取值 `ocr_crop`，可选多两个字段 `repaired`、`repaired_from`（见
+`backend/pipeline/retainpdf_pipeline/ocr/document_schema/README.md`「行间公式编号」）。**网页前端不用改**（还没读这个字段）。
+
+新依赖 `rapidocr==3.10.0`、`onnxruntime==1.32.0` 是 `retainpdf-pipeline[scan-ocr]` 这个 extra：后端工作区（开发环境、CI、Docker）装上了；
+桌面的依赖清单由 `sync_backend_python_requirements.py` 只按必装依赖生成，**这次没变**。桌面不装也能跑：这一步跳过，
+`derived.formula_numbers.ocr_crop.skipped = "ocr_engine_unavailable"`，归一化、翻译照常（`ops/release/desktop_python_check.py` 已把 `rapidocr`
+登记成可选 import）。桌面要用这个功能时：
+
+| 文件 | 旧写法 | 新写法 |
+|---|---|---|
+| `.github/scripts/sync_backend_python_requirements.py` 的三个 `frontend/desktop/requirements-desktop-*.txt` 目标 | `_render_requirements(pipeline_runtime, …)` | 和 Docker 一样用 `docker_runtime`（必装 + `scan-ocr` extra），再跑一遍脚本生成 |
+| 生成出来的 `frontend/desktop/requirements-desktop-{posix,windows,macos}.txt` | 到 `urllib3==2.5.0` 为止 | 多两行 `onnxruntime==1.32.0`、`rapidocr==3.10.0`（pip 再带上 numpy、opencv-python-headless、shapely、pyclipper、omegaconf、PyYAML、tqdm、colorlog、six、protobuf、flatbuffers） |
+
+体积（新增的这些包）：
+
+| 平台 | 轮子（下载） | 装好以后 |
+|---|---|---|
+| macOS arm64 | 约 100 MB（onnxruntime 22.5、opencv 25.8、rapidocr 27.3、numpy 5.5–15） | 本机实测约 215 MB（onnxruntime 80、cv2 67、rapidocr 32 含 31 MB 模型、numpy 24、shapely 5） |
+| Linux x86_64 | 约 138 MB（opencv 63.7、onnxruntime 27.8、rapidocr 27.3、numpy 16.9） | 实测约 350 MB（解开 manylinux_2_28 轮子） |
+| Windows x64 | 约 106 MB（opencv 47.8、rapidocr 27.3、onnxruntime 16.7、numpy 12.6） | 没量，估 250 MB 上下 |
+
+要注意的：
+
+- onnxruntime 1.32.0 **没有 macOS x86_64（Intel）轮子**；opencv-python-headless 5.1.0.95 的 macOS 轮子要 **macOS 15** 起。
+  桌面要支持 Intel Mac 或更老的 macOS，得给桌面另钉 opencv 4.x（rapidocr 要 ≥ 4.5.1.48）、Intel 上不装 onnxruntime（这一步跳过）。
+- Linux 安装包只装 manylinux 轮子（`--only-binary=:all:`）：上面几个都有 manylinux_2_28 的轮子，glibc 基线检查（2.28）应该过，没实测。
+- 模型用 rapidocr 包里自带的（PP-OCRv6 small 检测 + 识别，约 31 MB），不联网下载，不用另外打包。
+
+---
+
 ## 阅读页提问：后端代装本机 agent，桌面版默认装上 pi 和 Claude Code（feat/acp-agent-install）
 
 2026-11-26，只增不改，见 [阅读页提问](../../api/16-AI/01-阅读页提问.md) 的「代装本机 agent」，方案
@@ -115,7 +206,7 @@
 - `usage_update` 的 `_meta.retainpdf.usage` 多了 `rounds`、`tool_calls`、`context`（代码自动取了哪些页、几块），
   token 是各轮加起来的；问答记录里照旧原样存。
 - 可选（以后）：`session/prompt` 的参数里给 `_meta: {retainpdf: {anchor: {page, item_id, selection, source_text, translated_text}}}`
-  （问答记录的锚点写法）。不给时 agent 从 `anchorPromptBlocks` 写的出处里认（最后一行「（RetainPDF 任务 …，块 …，第 … 页）」和
+  （问答记录的锚点写法）。不给时 agent 从 `anchorPreamble`（`frontend/packages/reader/src/ask/ask-context.ts`，2026-11-26 以前是 `acp-adapter.ts` 的 `anchorPromptBlocks`）写的出处里认（最后一行「（RetainPDF 任务 …，块 …，第 … 页）」和
   「我选中的这段：」「这一块的原文：」「这一块的译文：」），所以**改那段出处的写法前先告诉后端**，或者先改成给 `_meta`。
 
 ---
@@ -2146,3 +2237,10 @@ PaddleOCR 返回 `max_file_bytes = 104857600`（100MB）和 `limits.chunked_uplo
 `PATCH /jobs/{job_id}/translations/{item_id}` 请求体多了可选的 `expected_translated_text`，对不上 409 `text_mismatch`（带
 `current_translated_text`）。给 agent 用，前端编辑框不用带，**前端不用改**。`REVISION_REASON_MESSAGES` 想覆盖全的话可以加一句
 `text_mismatch: "这段译文刚被别处改过，重新打开再改。"`。契约 `translation-revisions.v1` 已重新生成。
+
+## 退出时停 worker、在途请求排空（2026-11-26，fix/shutdown-inflight）
+
+后端状态管理第 0 步 Z1。打包桌面版退出时 jobsd 现在会停掉自己起的 worker（以前 worker 成孤儿接着花钱）；翻译收到 SIGTERM 后
+最多等 2 秒让在途请求回来、写上终态再退出；连接都没建成的请求记 `failed_not_sent`，不算结果不明。效果是退出再打开、断网以后，
+落 `translation_request_ambiguous` 要用户确认的任务变少。**前端不用改**：没有新字段、新状态（「待确认」状态是第 1 步的事），
+桌面壳给后端的 10 秒退出时限没变（`frontend/desktop/src/main/graceful-stop.js`），后端在 7 秒左右收完。

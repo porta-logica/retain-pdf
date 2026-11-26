@@ -77,6 +77,14 @@
 - **用量**：一排图标 + 短数字（3.8k、2%、6.6s），悬停写全（`turnFooterItems`）。
 - **空白时**：三个常问（讲讲这段、式子怎么来的、译文准不准），点了直接问。「回到最下面」挪到右边、变小，不压正文。
 
+2026-11-26 回答里可以有**互动块**（OpenUI）：```` ```openui-lang ```` 代码块画成能动手的界面，一直开，去掉 `Image`、YouTube（留 HtmlView）；
+提示词分层（前端生成 `contracts/openui/`，后端的 `openui_spec` / `openui_check` 教 agent），见
+[方案](../../ops/planning/reader-ask/20261126-互动块分层提示词.md) 和 [提问窗包的 README](../../../frontend/packages/ask/README.md)。
+
+2026-11-26 提问窗能**选模型和思考强度**（输入框那一行，assistant-ui 的 ModelSelector）：照 ACP 的 `configOptions`，本机 Claude Code、pi 自己给；
+RetainPDF 的自带类 agent 由网页端口合成「模型」一项（设置里存的那几条连接，换了下一问按新连接重开会话，`ask-port.ts` 的 `builtinModelOption`）；
+思考强度不在前端编（每个模型支持的档位不一样），由后端的自带 agent 按当前模型报 `thought_level`（后端 `feat/ask-thought-level`），报了才显示。详见[提问窗包的 README](../../../frontend/packages/ask/README.md)。
+
 ## 出处和问答记录
 
 - 右键时悬停框还没认出块（鼠标刚移过来、点在两段之间）：按点的位置找同一页最近的块（超过页高 15% 不算），带它的原文译文，

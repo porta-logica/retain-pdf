@@ -9,11 +9,15 @@
 //! - [`install_agent`]、[`spawn_default_installs`]：把本机 agent 装进后端自己的安装目录（2026-11-26，
 //!   docs/ops/planning/reader-ask/20261126-本机agent默认安装.md）。
 //!
+//! 回答里的互动块（OpenUI，2026-11-26，[`openui`]）：三类 agent 都拿到说明文件和检查器的位置——自带的两个在进程环境里，
+//! 本机 agent 在补进 `session/new` 的 `retainpdf mcp` 的 `env` 里；方案 docs/ops/planning/reader-ask/20261126-互动块后端实现.md。
+//!
 //! 自带的有两个（2026-11-26）：`retainpdf`（Python `retainpdf_ask_agent`）和 `retainpdf-pi`（pi-acp + pi + 我们的扩展，
 //! 见 [`pi`]，方案 docs/ops/planning/reader-ask/20261126-RetainPDF加pi.md）。两个都用设置里的模型，握手参数一样。
 mod bridge;
 mod gate;
 mod install;
+mod openui;
 mod pi;
 mod registry;
 
@@ -26,6 +30,7 @@ use serde::{Deserialize, Serialize};
 
 pub use bridge::{run_bridge, AgentProcess, BridgeOut, SessionDefaults, CLOSE_AGENT_ENDED};
 pub use install::{AgentInstallView, InstallMethod, InstallState, AGENTS_DIR_NAME, DEFAULT_INSTALL_ENV, NODE_DIR_ENV};
+pub use openui::{default_openui_check_dir, default_openui_dir, NODE_BIN_ENV, OPENUI_CHECK_DIR_ENV, OPENUI_DIR_ENV};
 pub use pi::PI_AGENT_ID;
 pub use registry::{AgentDistribution, AgentKind, AgentView, BUILTIN_AGENT_ID};
 
@@ -67,8 +72,15 @@ pub struct AcpConfig {
     pub backend_root: Option<PathBuf>,
     /// 后端自己管的本机 agent 安装目录（`<数据目录>/acp-agents`，[`AGENTS_DIR_NAME`]）。
     pub agents_dir: PathBuf,
-    /// 桌面版自带的 Node（`RUST_API_NODE_DIR`）：代装 npm 包、起托管的 npm 包时用。
+    /// 桌面版自带的 Node（`RUST_API_NODE_DIR`）：代装 npm 包、起托管的 npm 包、跑互动块的检查器时用。
     pub node_dir: Option<PathBuf>,
+    /// `RETAINPDF_NODE_BIN`：桌面版指向 Electron 本体（排版引擎、Word 导出也用它，起子进程时带 `ELECTRON_RUN_AS_NODE=1`）；
+    /// 没有 `RUST_API_NODE_DIR` 时 openui-check 退回用它（2026-11-26）。
+    pub node_bin: Option<PathBuf>,
+    /// 互动块的说明文件目录（`contracts/openui/`，[`default_openui_dir`]）；没有就不开互动块。
+    pub openui_dir: Option<PathBuf>,
+    /// 互动块的检查器包（`backend/openui-check/`，[`default_openui_check_dir`]）；没有时 `openui_check` 回「检查器用不了」。
+    pub openui_check_dir: Option<PathBuf>,
 }
 
 impl AcpConfig {
@@ -186,9 +198,11 @@ fn session_defaults(config: &AcpConfig, cwd: &Path) -> SessionDefaults {
     // 多把 AI 专用密钥时取排序后的第一把，每次一样
     let mut keys: Vec<&String> = config.agent_keys.iter().collect();
     keys.sort();
+    let openui_env = openui::openui_env(config);
     SessionDefaults {
         cwd: Some(cwd.to_path_buf()),
-        mcp_server: cli.map(|cli| bridge::retainpdf_mcp_server(&cli, keys.first().map(|key| key.as_str()))),
+        mcp_server: cli.map(|cli| bridge::retainpdf_mcp_server(&cli, keys.first().map(|key| key.as_str()), &openui_env)),
+        hide_model_option: false,
     }
 }
 
@@ -267,6 +281,7 @@ fn builtin_process(
         (ASK_ENV_API_KEY.into(), settings.secret),
     ];
     env.extend(book_env(config, book));
+    env.extend(openui::openui_env(config));
     Ok(AgentProcess {
         program: PathBuf::from(&config.python_bin),
         args: vec!["-m".into(), registry::BUILTIN_AGENT_MODULE.into()],
@@ -293,7 +308,8 @@ pub fn prepare_agent(
         check_local_gate(config, headers)?;
         let process = pi::pi_process(config, query, &cwd, book)?;
         // pi-acp 不把 mcpServers 交给 pi，书由扩展自己读，不补 retainpdf mcp
-        return Ok((process, SessionDefaults { cwd: Some(cwd), mcp_server: None }));
+        // pi-acp 报的选模型那一项去掉（模型是设置里存的连接），思考档位照转
+        return Ok((process, SessionDefaults { cwd: Some(cwd), mcp_server: None, hide_model_option: true }));
     } else if registry::is_local_agent(agent_id) {
         check_local_gate(config, headers)?;
         let launch = registry::resolve_local_agent(agent_id, &config.lookup())

@@ -53,6 +53,7 @@ document.v1.json
 - `python -m retainpdf_pipeline.translate.entrypoints.domain_prewarm --spec <job_root>/specs/domain-prewarm.spec.json`
   OCR 期间先做识别领域的辅助进程（`domain_prewarm.stage.v1`，不是任务阶段）：提交 OCR 后由 Rust 拉起（只在学术模式、
   走 Python 请求的任务），只读源 PDF 前两页的文本层，结果存进各任务共用的领域缓存，翻译阶段到时"shared cache hit"。
+  选了页的任务不拉起（2026-11-26）：它读的是整份上传，翻译阶段读子 PDF，预览文本不同、缓存对不上。
   不改任务状态、不写事件流，失败或没等到都只是翻译阶段自己问；日志在 `logs/domain-prewarm.log`。
 - `retainpdf-pipeline translate-from-ocr --spec <job_root>/specs/book.spec.json`
   provider/normalize 后继续翻译和渲染的入口之一（顶层垫片已删除，只有包内入口 `backend/pipeline/retainpdf_pipeline/translate/entrypoints/from_ocr_pipeline.py` 和 console 子命令，仅桌面兼容注脚）。
@@ -181,8 +182,15 @@ load document.v1
 OCR 做完的那一轮不扣、全部翻完，再走和整本一次翻一样的收尾（`book_flow.finish_book_translation`）。
 
 - 断点：归一化文档每轮在变，指纹按原文 PDF 的 sha256 认；新到的页不算"已完成的块又变回待翻"。
+- 选了页（`ocr.page_ranges`）的任务不会走到这里（Rust `ocr_streams_pages`，2026-11-26）：spec 里的原文是整份上传，
+  和按子 PDF 编页的 OCR 文档对不上。以前走过这条路、留下的断点指纹记的是整份上传的哈希，之后都是先 OCR 后翻译、按子 PDF 认，
+  接不上，第一次重试会从头翻（那份断点里的表格、页码标签本来就是按错的页做的）。
 - agent 引擎、开了译前准备的：要整本，等 OCR 做完再按整本翻（`execution._wait_for_whole_document_if_needed`）。
 - OCR 失败（清单 `failed=true`）时等的一方抛 `OcrStreamFailed`。阶段耗时在诊断里按轮累加。
+- 同一个任务目录再跑一次流式 OCR（2026-11-26，状态管理 Z5 / S46）：清单的 `seq` 接着旧清单往下数（`OcrStreamWriter` 开跑时读旧清单），
+  读的一方只认比它见过的新的那一版；旧清单是 `failed` 的开跑时清掉。Rust 拉起 OCR 和翻译之前也清一次
+  （`ocr_stream.rs` 的 `clear_failed_ocr_stream`），因为两个进程谁先起来说不准。Rust 补标清单时的临时文件名每次不同（以前固定 `.manifest.json.tmp`）。
+  眼下的执行路径碰不到这种情形（流式时父任务的 attempt 一建就是翻译阶段，续跑不重跑 OCR），是给以后「原地重跑 OCR」留的。
 
 ### 翻译引擎 agent（`translation.engine=agent`）
 
@@ -206,7 +214,13 @@ OCR 做完的那一轮不扣、全部翻完，再走和整本一次翻一样的�
   `skip_citation_only`），去掉公式、代码、角标、网址后一个英文词都没有的（纯数字、符号、网址、代码、整块公式，`skip_no_prose`；全大写的词四个字母以上才算词）。
   标完当场存盘（整页都保留原文的页也存）。
   规则在 agent 核心的 `checks.nothing_to_translate`；以前翻好的书用 `python -m retainpdf_translation_agent_engine.reclassify <任务目录> [--apply]`
-  把失败块按同一条规则改记，不用重翻。质检本来只查译好的块，失败、保留原文的块都不进 `qa_violations`。
+  把失败块按同一条规则改记，不用重翻。`--apply` 走修订的提交入口（`workflow/revision.py` 的 `commit_item_maintenance`）：
+  持断点的锁，页文件、断点页哈希和快照、修订日志（每块一条 `source=maintenance`）一起前进；断点还没提交时拒绝（2026-11-26，
+  以前直接改页文件，渲染按断点哈希读不出、下次修订被快照换回去）。质检本来只查译好的块，失败、保留原文的块都不进 `qa_violations`。
+  这几个标签登记在 `core/payload/parts/policy_state.py::ENGINE_KEEP_ORIGIN_LABELS`：续跑时页面策略的 `reset_policy_state` 和模型定的
+  `skip_model_keep_origin` 一样不打回「要翻」（`final_status=kept_origin` 且 `should_translate=False` 才算；2026-11-26，以前打回后
+  `update("policy_ready")` 报 regressed，每次重试都死在这里）。页面策略自己的 skip（标题、参考文献区……）续跑时照旧重判。
+  引擎新加保留原文的标签要登记进去，`test_agent_flow.py` 扫源码钉着。
 - agent 交回 `fallback_source` 的块：`mark_translation_failed_policy_state` + 死信诊断（`fallback_to=dead_letter_queue`，
   `degradation_reason=agent_fallback_source`），不卡发布门槛。
 - 额度用完、密钥不对、一直限流（agent 的 `StopRun`）：抛 `AgentRunStopped`，阶段失败，进度留着，重试时从断点接着翻、已缓存的请求不再花钱。
@@ -232,6 +246,18 @@ OCR 做完的那一轮不扣、全部翻完，再走和整本一次翻一样的�
    优先切在句末、分句标点之后，下一块不以标点开头；句末标点后面紧跟的引用角标（`。$^{55}$`）跟着前一句。
    公式（`$…$`、`$$…$$`、`<f1-abc/>`、`[[FORMULA_n]]`）不可拆；原文各块没有 `$$`、译文却写成独立公式的改回行内 `$…$`；
    direct_typst 下 `$` 不成对时整段放进第一个框，不切。agent 引擎一样（`translation-agent` 的 `units.py`、`breaks.py`）。
+   只按要翻的成员切：组里夹着不翻的块（`should_translate=False`）时它不分译文，以前分给它的那一段被扔掉、译文少一截
+   （`core/payload/parts/apply.py::apply_group_translated_entry`，2026-11-26）。
+
+续跑读页不改已有译文（`core/payload/translations.py::migrate_translations`，2026-11-26）：`$` 不成对、译文字段是模型的 JSON 壳，
+只打一行 `translation load: … keeps N suspect translations as is` 日志，不清字段、不写回磁盘。以前清空 6 个译文字段并落盘，
+`` `echo $HOME` `` 这种 agent 放过的译文也被抹掉，块变回待办，断点报 regressed。「`$` 成对没有」只有一份判定
+`retainpdf_math.spans.has_balanced_inline_math_delimiters`（行内代码里的 `$`、`\$` 不算），classic 的质量校验、请求缓存、读页日志共用；
+agent 核心只许用标准库，`checks.dollars_balanced` 是抄本，`test_dollar_balance.py` 钉着两边一致、代码外面不成对的照样拦。
+
+续跑时重新分组（`core/orchestration/units.py::keep_translated_blocks_out_of_mixed_groups`，2026-11-26）：上一轮整组一起译完的单元
+（成员记着同一段整组译文、而且都在新组里）留在一起，只把没译的块挪出去另外成组；拆不回原单元的块挪出来时单元译文换成它自己那一段，
+它自己那一段是空的时照旧算译完（内容在别的成员那一段里，改成待办断点守卫会报 regressed）。
 
 不要让模型按原来的分界逐框返回译文：英文在句中断栏，中文语序对不上（目的状语前置、复合词被切开），
 模型会把跨分界的半句挪进前一块翻完，再把后一块原样交回英文，而整段检查看不出来。
