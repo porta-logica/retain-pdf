@@ -1,0 +1,12 @@
+# Fork only: weekly main -> i18n sync. Persistent=true runs a missed sync at the next login.
+[Unit]
+Description=Weekly retain-pdf main -> i18n sync
+
+[Timer]
+# Monday 07:30 local time, i.e. after the daily GitHub mirror job (03:17 UTC) has updated main.
+OnCalendar=Mon *-*-* 07:30
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
