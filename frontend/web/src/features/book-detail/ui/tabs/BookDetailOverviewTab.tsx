@@ -28,7 +28,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { TitleMetaPanel } from "../panels/overview/TitleMetaPanel.jsx";
-import { formatZhDate } from "@/platform/utils/datetime.js";
+import { formatDate as formatLocaleDate } from "@/platform/utils/datetime.js";
 
 type OverviewStatus = {
   label: string;
@@ -78,7 +78,7 @@ function formatDate(value: unknown) {
   if (!raw) return "";
   const parsed = new Date(raw);
   if (Number.isNaN(parsed.getTime())) return raw;
-  return formatZhDate(parsed);
+  return formatLocaleDate(parsed);
 }
 
 

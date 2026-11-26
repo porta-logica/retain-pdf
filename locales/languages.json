@@ -1,0 +1,9 @@
+{
+  "source": "en",
+  "languages": [
+    { "code": "en", "name": "English" },
+    { "code": "de", "name": "Deutsch" },
+    { "code": "zh-CN", "name": "简体中文" }
+  ],
+  "pseudo": "xx"
+}
