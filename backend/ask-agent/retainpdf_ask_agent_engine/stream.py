@@ -1,0 +1,466 @@
+"""自带 agent 的模型调用：三种协议的流式请求，产出核心认识的事件（见 ``retainpdf_ask_agent.server``）。
+
+请求体用翻译底座 ``model_wire`` 的构造函数（和翻译同一套写法、思考档位、图片换写法），再打开流：
+
+- Anthropic Messages：``thinking_delta`` → 思考（Claude 只给摘要，要 ``thinking.display = summarized``），``text_delta`` → 正文；用量在 ``message_start`` / ``message_delta``
+  （输入 = input + cache_read + cache_creation）。前几轮的最后一块打 ``cache_control``，接着问时前面的对话按缓存读。
+- OpenAI Chat：``delta.reasoning_content``（DeepSeek、Qwen 这类）→ 思考，``delta.content`` → 正文；
+  ``stream_options.include_usage`` 要最后一块带用量，缓存命中在 ``prompt_tokens_details.cached_tokens``（DeepSeek 是
+  ``prompt_cache_hit_tokens``）。这些服务商的前缀缓存是自动的。
+- OpenAI Responses：``response.reasoning_summary_text.delta`` → 思考（要了 ``reasoning.summary = auto``），
+  ``response.output_text.delta`` → 正文，``response.completed`` 带用量。
+
+取消：每读一行看一次取消标记，叫停就关掉连接返回。HTTP 出错抛 ``RuntimeError``（服务商的状态码和一句说明，不带 key）。
+
+工具（读书，2026-11-25）：核心给了 ``tools``（名字、说明、JSON Schema）和 ``tool_choice``（``auto`` / ``none``）时按各家写法带上，
+流里的工具调用拼完整后产出 ``("tool_call", {id, name, arguments})``，最后产出 ``("native", …)``——这一轮回答要原样带回去的东西：
+
+- Anthropic：整轮的内容块（思考块带签名，开了思考又调工具时必须原样带回；``tool_use`` 的 ``input_json_delta`` 拼成 JSON）。
+  工具结果是下一条用户消息里的 ``tool_result`` 块，图片直接放在块里。每次请求的最后一条消息打缓存断点，下一轮按缓存读。
+- OpenAI Chat：``delta.tool_calls`` 按 ``index`` 拼；``reasoning_content`` 记下来跟着这一轮带回（DeepSeek 思考模式调工具时要求带回）。
+  工具结果是 ``role: tool`` 消息（只能是文字），图片另起一条用户消息。
+- Responses：``response.output_item.done`` 里的 ``function_call``；结果是 ``function_call_output``，图片另起一条用户消息。
+  带回时不带条目的 ``id``、不带推理条目（``store: false`` 时服务商那边查不到）。
+"""
+from __future__ import annotations
+
+import copy
+import json
+import threading
+import uuid
+from typing import Any, Iterator
+
+import requests
+
+from retainpdf_translation.llm.providers.deepseek.client import DEFAULT_BASE_URL
+from retainpdf_translation.llm.providers.deepseek.client import build_headers
+from retainpdf_translation.llm.providers.deepseek.client import chat_completions_url
+from retainpdf_translation.llm.shared import model_wire
+
+ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com/v1"
+CONNECT_TIMEOUT_SECS = 15
+READ_TIMEOUT_SECS = 180
+ERROR_BODY_CHARS = 300
+
+Event = tuple[str, Any]
+
+
+def _stop_reason(raw: Any) -> str:
+    value = str(raw or "")
+    if value in ("max_tokens", "length", "max_output_tokens"):
+        return "max_tokens"
+    if value in ("refusal", "content_filter"):
+        return "refusal"
+    return "end_turn"
+
+
+def _http_error(response: requests.Response) -> RuntimeError:
+    try:
+        payload = response.json()
+        error = payload.get("error") if isinstance(payload, dict) else None
+        detail = (error.get("message") if isinstance(error, dict) else error) or payload
+    except ValueError:
+        detail = response.text
+    return RuntimeError(f"模型服务返回 HTTP {response.status_code}：{str(detail)[:ERROR_BODY_CHARS]}")
+
+
+def _sse_events(response: requests.Response, cancel: threading.Event) -> Iterator[tuple[str, dict[str, Any]]]:
+    """SSE → (事件名, data 的 JSON)。``[DONE]`` 和不是 JSON 的 data 跳过。
+
+    一律按 UTF-8 读：``text/event-stream`` 没写 charset 时 requests 按 ISO-8859-1 解码，中文全成乱码（端到端测试抓到的）。"""
+    response.encoding = "utf-8"
+    event = ""
+    for raw in response.iter_lines(decode_unicode=True):
+        if cancel.is_set():
+            return
+        line = raw if isinstance(raw, str) else (raw or b"").decode("utf-8", "replace")
+        if not line:
+            event = ""
+            continue
+        if line.startswith("event:"):
+            event = line[6:].strip()
+        elif line.startswith("data:"):
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                payload = json.loads(data)
+            except ValueError:
+                continue
+            if isinstance(payload, dict):
+                yield event or str(payload.get("type") or ""), payload
+
+
+def _mark_history_cache(body: dict[str, Any]) -> None:
+    """Anthropic：倒数第二条（上一轮的回答）最后一块打缓存断点，前面的对话下一问按缓存读。只有一问时不打。"""
+    turns = body.get("messages") or []
+    if len(turns) < 3:
+        return
+    previous = turns[-2]
+    content = previous.get("content")
+    blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content or [])
+    if blocks and isinstance(blocks[-1], dict):
+        blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+        previous["content"] = blocks
+
+
+def _with_summarized_thinking(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Claude 不给思考原文，只给摘要，而且要 ``thinking.display = summarized`` 才发（不写就是 omitted，什么都不发）。
+    每个开思考的写法先带上它试，不认（400）再去掉；原有的退回顺序不变。"""
+    expanded: list[dict[str, Any]] = []
+    for fields in candidates:
+        thinking = fields.get("thinking")
+        if isinstance(thinking, dict) and thinking.get("type") in ("adaptive", "enabled"):
+            expanded.append({**fields, "thinking": {**thinking, "display": "summarized"}})
+        expanded.append(fields)
+    return expanded
+
+
+def _split_tool_turns(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """这一问调工具以后的消息（带 ``tool_calls`` 的回答、``tool`` 结果）都在最后：前面照旧用 ``model_wire`` 换写法，后面各家自己换。"""
+    for index, message in enumerate(messages):
+        if message.get("role") == "tool" or (message.get("role") == "assistant" and message.get("tool_calls") is not None):
+            return messages[:index], messages[index:]
+    return messages, []
+
+
+def _arguments(call: dict[str, Any]) -> dict[str, Any]:
+    arguments = call.get("arguments")
+    return arguments if isinstance(arguments, dict) else {}
+
+
+def _data_url(image: dict[str, Any]) -> str:
+    return f"data:{image.get('mime_type') or 'image/jpeg'};base64,{image.get('data') or ''}"
+
+
+IMAGES_NOTE = "上面工具取回的页图："
+
+
+def _anthropic_tool_turns(suffix: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    turns: list[dict[str, Any]] = []
+    for message in suffix:
+        if message.get("role") == "assistant":
+            native = message.get("native")
+            if isinstance(native, dict) and native.get("protocol") == "anthropic" and native.get("content"):
+                blocks = copy.deepcopy(native["content"])
+            else:
+                blocks = ([{"type": "text", "text": message["content"]}] if message.get("content") else []) + [
+                    {"type": "tool_use", "id": call["id"], "name": call["name"], "input": _arguments(call)}
+                    for call in message.get("tool_calls") or []
+                ]
+            turns.append({"role": "assistant", "content": blocks})
+        elif message.get("role") == "tool":
+            content: list[dict[str, Any]] = [{"type": "text", "text": str(message.get("content") or "（空）")}]
+            content += [{"type": "image", "source": {"type": "base64", "media_type": image.get("mime_type") or "image/jpeg", "data": image.get("data") or ""}}
+                        for image in message.get("images") or []]
+            block = {"type": "tool_result", "tool_use_id": message.get("tool_call_id"), "content": content}
+            if message.get("is_error"):
+                block["is_error"] = True
+            if turns and turns[-1]["role"] == "user":
+                turns[-1]["content"].append(block)
+            else:
+                turns.append({"role": "user", "content": [block]})
+    return turns
+
+
+def _mark_last_message(body: dict[str, Any]) -> None:
+    """Anthropic：最后一条消息的最后一块打缓存断点（有工具时每轮都打，下一轮前面的全按缓存读）。"""
+    turns = body.get("messages") or []
+    if not turns:
+        return
+    last = turns[-1]
+    content = last.get("content")
+    blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content or [])
+    if blocks and isinstance(blocks[-1], dict):
+        blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+        last["content"] = blocks
+
+
+def _anthropic(messages, cancel, *, model, base_url, api_key, thinking, tools=None, tool_choice=None) -> Iterator[Event]:
+    url = model_wire.anthropic_messages_url(base_url or ANTHROPIC_DEFAULT_BASE_URL)
+    headers = model_wire.anthropic_headers(api_key)
+    candidates = _with_summarized_thinking(model_wire.anthropic_thinking_candidates(thinking, model=model))
+    prefix, suffix = _split_tool_turns(messages)
+    response = None
+    for index, fields in enumerate(candidates):
+        body = model_wire.anthropic_body(model=model, messages=prefix, temperature=None, response_format=None, thinking_fields=fields)
+        body["stream"] = True
+        _mark_history_cache(body)
+        if tools:
+            body["messages"] += _anthropic_tool_turns(suffix)
+            body["tools"] = [{"name": tool["name"], "description": tool["description"], "input_schema": tool["parameters"]} for tool in tools]
+            body["tool_choice"] = {"type": tool_choice or "auto"}
+            _mark_last_message(body)
+        response = requests.post(url, headers=headers, json=body, stream=True, timeout=(CONNECT_TIMEOUT_SECS, READ_TIMEOUT_SECS))
+        # 模型不认这种思考写法（400）就换下一种；别的错误直接报
+        if response.status_code == 400 and index < len(candidates) - 1:
+            response.close()
+            continue
+        break
+    assert response is not None
+    if response.status_code >= 400:
+        raise _http_error(response)
+    usage: dict[str, int] = {}
+    blocks: dict[int, dict[str, Any]] = {}
+    partial_json: dict[int, str] = {}
+    with response:
+        for event, data in _sse_events(response, cancel):
+            if event == "message_start":
+                raw = (data.get("message") or {}).get("usage") or {}
+                cache_read = int(raw.get("cache_read_input_tokens") or 0)
+                cache_write = int(raw.get("cache_creation_input_tokens") or 0)
+                usage.update({
+                    "input_tokens": int(raw.get("input_tokens") or 0) + cache_read + cache_write,
+                    "cache_read_tokens": cache_read,
+                    "cache_write_tokens": cache_write,
+                })
+            elif event == "content_block_start":
+                block = data.get("content_block")
+                if isinstance(block, dict):
+                    blocks[int(data.get("index") or 0)] = dict(block)
+            elif event == "content_block_delta":
+                index = int(data.get("index") or 0)
+                block = blocks.setdefault(index, {})
+                delta = data.get("delta") or {}
+                if delta.get("type") == "thinking_delta" and delta.get("thinking"):
+                    block["thinking"] = str(block.get("thinking") or "") + delta["thinking"]
+                    yield "thought", delta["thinking"]
+                elif delta.get("type") == "text_delta" and delta.get("text"):
+                    block["text"] = str(block.get("text") or "") + delta["text"]
+                    yield "text", delta["text"]
+                elif delta.get("type") == "signature_delta":
+                    block["signature"] = str(block.get("signature") or "") + str(delta.get("signature") or "")
+                elif delta.get("type") == "input_json_delta":
+                    partial_json[index] = partial_json.get(index, "") + str(delta.get("partial_json") or "")
+            elif event == "content_block_stop":
+                index = int(data.get("index") or 0)
+                block = blocks.get(index) or {}
+                if block.get("type") == "tool_use":
+                    raw_input = partial_json.get(index, "")
+                    try:
+                        block["input"] = json.loads(raw_input) if raw_input.strip() else (block.get("input") or {})
+                    except ValueError:
+                        block["input"] = {}
+                        yield "tool_call", {"id": block.get("id"), "name": block.get("name"), "arguments": raw_input}
+                        continue
+                    yield "tool_call", {"id": block.get("id"), "name": block.get("name"), "arguments": block["input"]}
+            elif event == "message_delta":
+                raw = data.get("usage") or {}
+                if raw.get("output_tokens") is not None:
+                    usage["output_tokens"] = int(raw["output_tokens"])
+                reason = (data.get("delta") or {}).get("stop_reason")
+                if reason:
+                    yield "stop", _stop_reason(reason)
+            elif event == "error":
+                raise RuntimeError(f"模型服务报错：{str((data.get('error') or {}).get('message') or data)[:ERROR_BODY_CHARS]}")
+    if tools and blocks:
+        content = [_clean_block(blocks[index]) for index in sorted(blocks)]
+        # 空的文字块 Anthropic 不收
+        yield "native", {"protocol": "anthropic", "content": [block for block in content if block.get("type") != "text" or block.get("text")]}
+    if usage:
+        yield "usage", usage
+
+
+def _clean_block(block: dict[str, Any]) -> dict[str, Any]:
+    """带回去的块只留请求里认的字段（流里的 text 块可能带空的 citations）。"""
+    kind = block.get("type")
+    keep = {"thinking": ("type", "thinking", "signature"), "redacted_thinking": ("type", "data"), "text": ("type", "text"),
+            "tool_use": ("type", "id", "name", "input")}.get(str(kind))
+    return {key: block[key] for key in keep if key in block} if keep else block
+
+
+def _openai_tool_specs(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{"type": "function", "function": {"name": tool["name"], "description": tool["description"], "parameters": tool["parameters"]}}
+            for tool in tools]
+
+
+def _chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """中性消息 → Chat Completions：工具结果只能是文字，这一轮取回的图另起一条用户消息跟在结果后面。"""
+    out: list[dict[str, Any]] = []
+    images: list[dict[str, Any]] = []
+
+    def flush() -> None:
+        if images:
+            out.append({"role": "user", "content": [{"type": "text", "text": IMAGES_NOTE},
+                                                    *({"type": "image_url", "image_url": {"url": _data_url(image)}} for image in images)]})
+            images.clear()
+
+    for message in model_wire.merge_system_messages(messages):
+        role = message.get("role")
+        if role == "tool":
+            out.append({"role": "tool", "tool_call_id": message.get("tool_call_id"), "content": str(message.get("content") or "（空）")})
+            images.extend(message.get("images") or [])
+            continue
+        flush()
+        if role == "assistant" and message.get("tool_calls") is not None:
+            turn: dict[str, Any] = {"role": "assistant", "content": message.get("content") or "", "tool_calls": [
+                {"id": call["id"], "type": "function",
+                 "function": {"name": call["name"], "arguments": json.dumps(_arguments(call), ensure_ascii=False)}}
+                for call in message["tool_calls"]]}
+            native = message.get("native")
+            if isinstance(native, dict) and native.get("reasoning_content"):
+                turn["reasoning_content"] = native["reasoning_content"]
+            out.append(turn)
+        else:
+            out.append({key: value for key, value in message.items() if key in ("role", "content")})
+    flush()
+    return out
+
+
+def _parse_arguments(raw: str) -> Any:
+    try:
+        return json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        return raw  # 核心认出不是对象，回给模型说参数不对
+
+
+def _openai_chat(messages, cancel, *, model, base_url, api_key, thinking, tools=None, tool_choice=None) -> Iterator[Event]:
+    base_url = base_url or DEFAULT_BASE_URL
+    url = chat_completions_url(base_url)
+    headers = build_headers(api_key, base_url)
+    fields = model_wire.openai_thinking_candidates(model=model, base_url=base_url, thinking=thinking)[0]
+    body = {"model": model, "messages": _chat_messages(messages), "stream": True,
+            "stream_options": {"include_usage": True}, **fields}
+    if tools:
+        body["tools"] = _openai_tool_specs(tools)
+        body["tool_choice"] = tool_choice or "auto"
+    response = requests.post(url, headers=headers, json=body, stream=True, timeout=(CONNECT_TIMEOUT_SECS, READ_TIMEOUT_SECS))
+    if response.status_code >= 400:
+        raise _http_error(response)
+    usage: dict[str, int] = {}
+    calls: dict[int, dict[str, str]] = {}
+    reasoning: list[str] = []
+    with response:
+        for _, data in _sse_events(response, cancel):
+            for choice in data.get("choices") or []:
+                delta = choice.get("delta") or {}
+                if delta.get("reasoning_content"):
+                    reasoning.append(delta["reasoning_content"])
+                    yield "thought", delta["reasoning_content"]
+                if delta.get("content"):
+                    yield "text", delta["content"]
+                for fragment in delta.get("tool_calls") or []:
+                    if not isinstance(fragment, dict):
+                        continue
+                    call = calls.setdefault(int(fragment.get("index") or 0), {"id": "", "name": "", "arguments": ""})
+                    function = fragment.get("function") or {}
+                    call["id"] = call["id"] or str(fragment.get("id") or "")
+                    call["name"] += str(function.get("name") or "")
+                    call["arguments"] += str(function.get("arguments") or "")
+                if choice.get("finish_reason"):
+                    yield "stop", _stop_reason(choice["finish_reason"])
+            raw = data.get("usage")
+            if isinstance(raw, dict):
+                details = raw.get("prompt_tokens_details") or {}
+                usage = {
+                    "input_tokens": int(raw.get("prompt_tokens") or 0),
+                    "output_tokens": int(raw.get("completion_tokens") or 0),
+                    "cache_read_tokens": int(details.get("cached_tokens") or raw.get("prompt_cache_hit_tokens") or 0),
+                    "reasoning_tokens": int((raw.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0),
+                }
+    if not cancel.is_set():
+        for index in sorted(calls):
+            call = calls[index]
+            yield "tool_call", {"id": call["id"] or f"call_{uuid.uuid4().hex[:12]}", "name": call["name"],
+                                "arguments": _parse_arguments(call["arguments"])}
+        if calls:
+            yield "native", {"protocol": "openai", "reasoning_content": "".join(reasoning)}
+    if usage:
+        yield "usage", usage
+
+
+def _responses_tool_turns(suffix: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    images: list[dict[str, Any]] = []
+
+    def flush() -> None:
+        if images:
+            items.append({"role": "user", "content": [{"type": "input_text", "text": IMAGES_NOTE},
+                                                      *({"type": "input_image", "image_url": _data_url(image)} for image in images)]})
+            images.clear()
+
+    for message in suffix:
+        if message.get("role") == "tool":
+            items.append({"type": "function_call_output", "call_id": message.get("tool_call_id"), "output": str(message.get("content") or "（空）")})
+            images.extend(message.get("images") or [])
+            continue
+        flush()
+        if message.get("content"):
+            items.append({"role": "assistant", "content": message["content"]})
+        for call in message.get("tool_calls") or []:
+            items.append({"type": "function_call", "call_id": call["id"], "name": call["name"],
+                          "arguments": json.dumps(_arguments(call), ensure_ascii=False)})
+    flush()
+    return items
+
+
+def _openai_responses(messages, cancel, *, model, base_url, api_key, thinking, tools=None, tool_choice=None) -> Iterator[Event]:
+    base_url = base_url or DEFAULT_BASE_URL
+    url = model_wire.responses_url(base_url)
+    headers = build_headers(api_key, base_url)
+    fields = copy.deepcopy(model_wire.responses_thinking_candidates(model=model, base_url=base_url, thinking=thinking)[0])
+    prefix, suffix = _split_tool_turns(messages)
+    body = model_wire.responses_body(model=model, messages=model_wire.merge_system_messages(prefix), temperature=None,
+                                     response_format=None, thinking_fields=fields)
+    body["stream"] = True
+    if isinstance(body.get("reasoning"), dict) and body["reasoning"].get("effort") not in (None, "none"):
+        body["reasoning"]["summary"] = "auto"
+    if tools:
+        body["input"] += _responses_tool_turns(suffix)
+        # strict 默认是真，要所有参数都必填；我们的参数有可选的
+        body["tools"] = [{"type": "function", "name": tool["name"], "description": tool["description"],
+                          "parameters": tool["parameters"], "strict": False} for tool in tools]
+        body["tool_choice"] = tool_choice or "auto"
+    response = requests.post(url, headers=headers, json=body, stream=True, timeout=(CONNECT_TIMEOUT_SECS, READ_TIMEOUT_SECS))
+    if response.status_code >= 400:
+        raise _http_error(response)
+    called = False
+    with response:
+        for event, data in _sse_events(response, cancel):
+            kind = event or str(data.get("type") or "")
+            if kind == "response.reasoning_summary_text.delta" and data.get("delta"):
+                yield "thought", data["delta"]
+            elif kind == "response.output_text.delta" and data.get("delta"):
+                yield "text", data["delta"]
+            elif kind == "response.output_item.done" and (data.get("item") or {}).get("type") == "function_call":
+                item = data["item"]
+                called = True
+                yield "tool_call", {"id": item.get("call_id") or f"call_{uuid.uuid4().hex[:12]}", "name": item.get("name"),
+                                    "arguments": _parse_arguments(str(item.get("arguments") or ""))}
+            elif kind in ("response.completed", "response.incomplete"):
+                result = data.get("response") or {}
+                raw = result.get("usage") or {}
+                yield "usage", {
+                    "input_tokens": int(raw.get("input_tokens") or 0),
+                    "output_tokens": int(raw.get("output_tokens") or 0),
+                    "cache_read_tokens": int((raw.get("input_tokens_details") or {}).get("cached_tokens") or 0),
+                    "reasoning_tokens": int((raw.get("output_tokens_details") or {}).get("reasoning_tokens") or 0),
+                }
+                reason = (result.get("incomplete_details") or {}).get("reason")
+                yield "stop", _stop_reason(reason) if kind == "response.incomplete" else "end_turn"
+            elif kind in ("response.failed", "error"):
+                error = (data.get("response") or {}).get("error") or data.get("error") or data
+                raise RuntimeError(f"模型服务报错：{str(error)[:ERROR_BODY_CHARS]}")
+    if called:
+        yield "native", {"protocol": "openai_responses"}
+
+
+def make_stream_fn(*, model: str, base_url: str, api_key: str, protocol: str = "", thinking: str = ""):
+    """按连接配置给核心一个 ``stream_fn(messages, cancel)``。"""
+    profile = model_wire.resolve_profile(base_url=base_url or DEFAULT_BASE_URL, model=model, protocol=protocol or None, thinking=thinking or None)
+    options = {"model": model, "base_url": base_url, "api_key": api_key, "thinking": profile.thinking}
+    if profile.protocol == model_wire.PROTOCOL_ANTHROPIC:
+        target = _anthropic
+    elif profile.protocol == model_wire.PROTOCOL_OPENAI_RESPONSES:
+        target = _openai_responses
+    else:
+        target = _openai_chat
+
+    def stream(messages: list[dict[str, Any]], cancel: threading.Event, *, tools: list[dict[str, Any]] | None = None,
+               tool_choice: str | None = None) -> Iterator[Event]:
+        return target(messages, cancel, tools=tools, tool_choice=tool_choice, **options)
+
+    return stream
+
+
+__all__ = ["make_stream_fn"]

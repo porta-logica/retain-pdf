@@ -5,6 +5,7 @@ import type { ProtectedPdfFile } from "../../pdf/useProtectedPdfFile.js";
 import type { PageRowHeights } from "../../pdf/usePageRowSync.js";
 import { READER_ZOOM_DEFAULT } from "../../pdf/reader-zoom.js";
 import { useKeepPageOnResize } from "../../hooks/use-keep-page-on-resize.js";
+import { usePaneHorizontalSync } from "../../hooks/use-pane-horizontal-sync.js";
 import {
   READER_GRID_CLASS,
   READER_SCROLL_SHELL_CLASS,
@@ -17,6 +18,7 @@ import {
 import type { LiveTranslationState } from "../../shared/data/live-translation-state.js";
 import type { ReaderPaneComposition } from "../../ReaderAppReactPdf.js";
 import { useReaderContext } from "./reader-context.js";
+import { ReaderPaneScrollbars } from "./ReaderPaneScrollbars.js";
 import { VersionWatermarks } from "./ReaderVersionCompare.js";
 
 
@@ -181,6 +183,8 @@ export function ReaderCompareGrid(props: ReaderCompareGridProps): ReactElement {
   const translatedFile = props.translatedFile ?? ctx?.translatedFile ?? null;
   const onMetrics = props.onMetrics ?? ctx?.onMetrics;
   const onNumPagesChange = props.onNumPagesChange ?? ctx?.onNumPagesChange;
+  const onPdfOutline = ctx?.onPdfOutline;
+  const onPdfDocument = ctx?.onPdfDocument;
   const activeRegion = props.activeRegion ?? ctx?.activeRegion;
   const regions = props.regions ?? ctx?.regions ?? [];
 
@@ -224,6 +228,8 @@ export function ReaderCompareGrid(props: ReaderCompareGridProps): ReactElement {
     : null;
   // 阅读区变宽变窄（开关侧栏、拖分栏）时停在原来那一页，不让页高变化把眼前换成别的页。
   useKeepPageOnResize(shellEl, pageWidthBasis);
+  // 对照时两栏横向一起滚（滚一栏另一栏跟着），两边看的始终是同一块。
+  usePaneHorizontalSync(shellEl, presentation.compareMode);
 
   return (
     <div
@@ -255,6 +261,9 @@ export function ReaderCompareGrid(props: ReaderCompareGridProps): ReactElement {
                 : "暂无原文 PDF"
             }
             onNumPagesChange={onNumPagesChange}
+            // 「对比版本」把左栏换成另一份译文时不读它的书签。
+            onOutline={compareVersion ? undefined : onPdfOutline}
+            onDocument={compareVersion ? undefined : onPdfDocument}
             activeRegion={activeRegion}
             regions={compareVersion?.regions ?? regions}
             readerMetadata={readerMetadata}
@@ -297,6 +306,8 @@ export function ReaderCompareGrid(props: ReaderCompareGridProps): ReactElement {
             onMetrics={onMetrics}
             emptyLabel="暂无译文 PDF"
             onNumPagesChange={onNumPagesChange}
+            onOutline={onPdfOutline}
+            onDocument={onPdfDocument}
             activeRegion={activeRegion}
             regions={regions}
             readerMetadata={readerMetadata}
@@ -308,6 +319,8 @@ export function ReaderCompareGrid(props: ReaderCompareGridProps): ReactElement {
           />
         ) : null}
       </main>
+      {/* 页比栏宽时（对照超过 50%）每栏底部一条一直看得见的横向滚动条 */}
+      <ReaderPaneScrollbars shellEl={shellEl} />
       {compareVersion ? <VersionWatermarks shellEl={shellEl} left={compareVersion.left} right={compareVersion.right} /> : null}
     </div>
   );

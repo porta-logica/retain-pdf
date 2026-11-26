@@ -99,6 +99,12 @@ const PAGE_BUNDLES = [
     entry: path.join(frontendRoot, "src/app/editorial/entry.tsx"),
     out: "editorial.bundle",
   },
+  // 白板讲解板演示（学习系统，写死的讲解脚本）：whiteboard.html → src/app/whiteboard/entry.tsx → dist/whiteboard.bundle.js
+  {
+    name: "whiteboard",
+    entry: path.join(frontendRoot, "src/app/whiteboard/entry.tsx"),
+    out: "whiteboard.bundle",
+  },
 ];
 
 // mathjax-full/js/components/version.js 在未定义 PACKAGE_VERSION 时会
@@ -168,6 +174,9 @@ function bundleOptions({ entry, out }) {
       ".tsx": "tsx",
     },
     minify: !watchMode,
+    // 压缩时保留函数、类名：React 报错的组件栈才看得出是哪个组件（桌面日志里排查 #185 这类问题用），
+    // 代价是包大一点（2026-11-24）。
+    keepNames: true,
     sourcemap: watchMode ? "inline" : false,
     logLevel: "info",
     legalComments: "none",

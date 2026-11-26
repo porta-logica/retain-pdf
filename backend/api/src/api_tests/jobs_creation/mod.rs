@@ -27,6 +27,7 @@ pub(super) fn test_state(test_name: &str) -> AppState {
         python_bin: "python".to_string(),
         simple_port: 41001,
         api_keys: HashSet::new(),
+        agent_keys: HashSet::new(),
         ..dirs.config()
     }))
 }
@@ -770,7 +771,7 @@ fn submit_job_refuses_existing_or_malformed_job_ids() {
     assert_eq!(created.job_id, "custom-job_1");
 
     let err = submit_input(&deps, &input).expect_err("已有的编号不许再建");
-    assert!(matches!(&err, AppError::Conflict(_)), "{err:?}");
+    assert!(matches!(&err, AppError::Reasoned { reason: "job_exists", .. }), "{err:?}");
     assert_eq!(
         state.db.get_job("custom-job_1").unwrap().created_at,
         created.created_at,

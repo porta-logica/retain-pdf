@@ -118,7 +118,6 @@ test("management endpoints that reach the computer itself are not opened on the 
     ["GET", "/api/v1/backups"],
     ["PUT", "/api/v1/sync"],
     ["POST", "/api/v1/sync/run"],
-    ["POST", "/api/v1/fonts/upload"],
     ["POST", "/api/v1/runtime-assets/download"],
     ["POST", "/api/v1/internal/model/jobs/j/requests"],
     ["GET", "/api/v1/jobs/j1/files/internal/x.json"],
@@ -131,6 +130,8 @@ test("management endpoints that reach the computer itself are not opened on the 
     ["POST", "/api/v1/providers/mineru/validate-token"],
     ["POST", "/api/v1/providers/deepseek/validate-token"],
     ["POST", "/api/v1/providers/deepseek/balance"],
+    ["GET", "/api/v1/ai/agents"],
+    ["GET", "/api/v1/ai/agents/claude-code/acp?api_key=x"],
     // 绕法：编码、重复斜杠、大小写、点段
     ["PUT", "/api/v1/%73ync"],
     ["PUT", "/api/v1//sync"],

@@ -6,6 +6,8 @@ const buildOrder = [
   "@retainpdf/contracts",
   "@retainpdf/domain",
   "@retainpdf/ui",
+  "@retainpdf/whiteboard",
+  "@retainpdf/ask",
   "@retainpdf/api",
   "@retainpdf/reader",
 ];

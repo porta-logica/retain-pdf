@@ -11,6 +11,7 @@ use crate::config::{AccountsConfig, OriginPolicyConfig};
 use crate::routes::common::{method_not_allowed, request_origin_is_allowed, unknown_route};
 
 mod accounts;
+mod ai;
 mod collections;
 mod credentials;
 mod documents;
@@ -32,6 +33,7 @@ pub(crate) fn registered_endpoints() -> Vec<crate::app::endpoints::Endpoint> {
     let mut tables = vec![
         public::ENDPOINTS,
         accounts::ENDPOINTS,
+        ai::ENDPOINTS,
         credentials::ENDPOINTS,
         providers::ENDPOINTS,
         ingestion::ENDPOINTS,
@@ -123,6 +125,7 @@ pub fn build_simple_app(state: AppState) -> Router {
 fn authenticated_api_routes(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(accounts::routes())
+        .merge(ai::routes())
         .merge(credentials::routes())
         .merge(ingestion::routes())
         .merge(glossaries::routes())
@@ -137,7 +140,12 @@ fn authenticated_api_routes(state: &AppState) -> Router<AppState> {
         .merge(runtime_assets::routes())
         .merge(metrics::routes())
         .method_not_allowed_fallback(method_not_allowed)
-        // 先挂的在里层、后跑：先认证（require_api_key），再看能不能访问（enforce_access）。
+        // 先挂的在里层、后跑：先认证（require_api_key），再看能不能访问（enforce_access），
+        // 最后是 `Idempotency-Key`（只管登记表里标了 `[idempotent]` 的接口；要知道是哪个用户，所以在认证里层）。
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            super::idempotency::guard,
+        ))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::enforce_access,

@@ -146,7 +146,7 @@ function BookCardImpl({
   return (
     <div
       ref={cardRef}
-      className="book-card recent-job-item group text-left transition-transform duration-150 ease-[var(--ease-out)] active:scale-[0.99]"
+      className="book-card recent-job-item group text-left"
       role="button"
       tabIndex={0}
       data-book-card="true"
@@ -155,16 +155,15 @@ function BookCardImpl({
       data-library-only={libraryOnly ? "true" : "false"}
       data-status={item.status || ""}
       data-updated-at={item.updated_at || ""}
+      // 阅读状态（unread / reading / done）：主题拿它挂装饰，「在读」画书签丝带（BookCard.css）。
+      data-reading-status={item.reading_status || ""}
       onClick={handleCardClick}
       onKeyDown={handleKeyDown}
     >
       <div
         className={cn(
-          "relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-muted/40 shadow-[0_2px_16px_color-mix(in_srgb,var(--shadow-color)_7%,transparent)] transition-[transform,box-shadow] duration-200 ease-[var(--ease-out)]",
-          !batchMode &&
-            "group-hover:-translate-y-0.5 group-hover:shadow-[0_8px_28px_color-mix(in_srgb,var(--shadow-color)_12%,transparent)]",
-          !batchMode &&
-            "group-focus-within:-translate-y-0.5 group-focus-within:shadow-[0_8px_28px_color-mix(in_srgb,var(--shadow-color)_12%,transparent)]",
+          "book-card-cover relative aspect-[3/4] overflow-hidden",
+          batchMode && "is-batch-mode",
           batchMode && selected && "ring-2 ring-foreground ring-offset-2",
         )}
       >
@@ -182,14 +181,18 @@ function BookCardImpl({
         />
       </div>
 
-      <div className="mt-2 flex flex-col gap-0.5">
+      {/* 装饰位：纸胶带。放在封面区外（封面有 overflow-hidden，会把探出封面边缘的胶带裁掉）、封面之后（叠在封面上）；
+          显示规则和位置由通用装饰位 CSS 管，没样式时是空 span，零尺寸、不占位。 */}
+      <span className="theme-ornament" data-ornament="book-cover-tape" aria-hidden="true" />
+
+      <div className="book-card-body flex flex-col gap-0.5">
         <h3
-          className="book-card-title recent-job-id line-clamp-2 text-xs font-semibold leading-snug text-foreground transition-colors group-hover:text-primary"
+          className="book-card-title recent-job-id line-clamp-2 text-foreground transition-colors group-hover:text-primary"
           title={fullTitle}
         >
           {title}
         </h3>
-        <p className="book-card-meta recent-job-real-id line-clamp-1 text-[10px] text-muted-foreground">
+        <p className="book-card-meta recent-job-real-id line-clamp-1 text-muted-foreground">
           {pageCount} 页 · {updatedAt}
         </p>
       </div>

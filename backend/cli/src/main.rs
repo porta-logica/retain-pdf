@@ -12,11 +12,11 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use crate::cmd::{backup, compact, config, db_snapshot, doctor, setup, status, sync};
+use crate::cmd::{backup, books, compact, config, db_snapshot, doctor, mcp, setup, status, sync};
 use crate::context::Ctx;
 
 #[derive(Parser)]
-#[command(name = "retainpdf", version, about = "RetainPDF 命令行:配置、状态、环境检查、备份、同步")]
+#[command(name = "retainpdf", version, about = "RetainPDF 命令行:配置、状态、环境检查、备份、同步、书文件夹、MCP")]
 struct Cli {
     /// 输出 JSON(给脚本用)
     #[arg(long, global = true)]
@@ -46,6 +46,13 @@ enum Command {
         #[command(subcommand)]
         action: backup::BackupCommand,
     },
+    /// 书文件夹：把书库导出成 Markdown，给 AI 直接读（要后端开着）
+    Books {
+        #[command(subcommand)]
+        action: books::BooksCommand,
+    },
+    /// 给 AI agent 用的 MCP 服务（stdio，由 agent 起）：改译文、看页图。密钥用环境变量 RETAINPDF_AGENT_KEY，没有就用本机的
+    Mcp,
     /// 整理书库数据库、把空间还给磁盘（只在后端没开时用；先自动备份）
     Compact(compact::CompactArgs),
     /// 多设备同步
@@ -63,12 +70,15 @@ enum Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let data = cli.data.clone();
     let outcome = Ctx::load(cli.json, cli.data).and_then(|ctx| match cli.command {
         Command::Setup => setup::run(&ctx),
         Command::Config { action } => config::run(&ctx, action),
         Command::Status => status::run(&ctx),
         Command::Doctor => doctor::run(&ctx),
         Command::Backup { action } => backup::run(&ctx, action),
+        Command::Books { action } => books::run(&ctx, action),
+        Command::Mcp => mcp::run(&ctx, data),
         Command::Compact(args) => compact::run(&ctx, args),
         Command::Sync { action } => sync::run(&ctx, action),
         Command::DbSnapshot { action } => db_snapshot::run(&ctx, action),

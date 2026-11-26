@@ -127,13 +127,12 @@ function replaceSentinels(value, config) {
 
 // 局域网上不开放的接口（2026-11-22，后端提醒：网关替访问者带后端密钥，等于给了电脑主人的权限）。
 // 「全部功能」指看书、上传、翻译、改书库；碰得到电脑本身的管理接口只能在电脑上用：
-// 恢复备份（覆盖数据库）、同步文件夹（能指向电脑上任意路径）、上传字体、下载运行资源、任务内部文件、
+// 恢复备份（覆盖数据库）、同步文件夹（能指向电脑上任意路径）、下载运行资源、任务内部文件、
 // 内部接口、账号管理；密钥库只许读（读接口不含明文），不许改。
 const LAN_BLOCKED = [
   { prefix: "/api/v1/admin" },
   { prefix: "/api/v1/backups" },
   { prefix: "/api/v1/sync" },
-  { prefix: "/api/v1/fonts/upload" },
   { prefix: "/api/v1/runtime-assets/download" },
   { prefix: "/api/v1/internal" },
   { pattern: /^\/api\/v1\/jobs\/[^/]+\/files\/internal(\/|$)/ },
@@ -142,6 +141,9 @@ const LAN_BLOCKED = [
   // 局域网访客能借它让这台电脑去请求 127.0.0.1 / 内网服务并读回部分返回（SSRF，后端 2026-11-22 提醒）。
   // 只放 GET /providers/ocr（服务商列表），检测留给电脑主人在本机做。
   { prefix: "/api/v1/providers", methods: ["POST", "PUT", "PATCH", "DELETE"] },
+  // 阅读页提问（2026-11-25，后端提醒）：ACP 桥会在这台电脑上起 Claude Code、Codex 这类本机 agent，
+  // 自带模型也用电脑主人的密钥；局域网访客一律不给，列 agent 也不给。网关本来就不转 WebSocket 升级，这里再拦一道。
+  { prefix: "/api/v1/ai" },
 ];
 
 /** 这个请求在局域网上是不是被拦。路径先解码、去掉重复的斜杠、转小写再比，绕不过去。 */

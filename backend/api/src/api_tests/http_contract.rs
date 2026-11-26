@@ -52,6 +52,33 @@ fn assert_unified_generic_error(
     expected_legacy_code: i64,
     expected_stable_code: &str,
 ) {
+    assert_unified_error_with_details(
+        snapshot,
+        expected_status,
+        expected_legacy_code,
+        expected_stable_code,
+        json!({}),
+    );
+}
+
+/// 请求体写错（第 13 条，2026-11-24）：400、顶层 `code` 40000、`BAD_REQUEST`，`error.details.reason` 区分情况。
+fn assert_body_error(snapshot: &ErrorResponseSnapshot, reason: &str) {
+    assert_unified_error_with_details(
+        snapshot,
+        StatusCode::BAD_REQUEST,
+        40000,
+        "BAD_REQUEST",
+        json!({ "reason": reason }),
+    );
+}
+
+fn assert_unified_error_with_details(
+    snapshot: &ErrorResponseSnapshot,
+    expected_status: StatusCode,
+    expected_legacy_code: i64,
+    expected_stable_code: &str,
+    expected_details: Value,
+) {
     assert_eq!(snapshot.status, expected_status, "{snapshot:?}");
     assert!(
         snapshot
@@ -76,7 +103,7 @@ fn assert_unified_generic_error(
         i64::from(expected_status.as_u16()),
         "{snapshot:?}"
     );
-    assert_eq!(body["error"]["details"], json!({}), "{snapshot:?}");
+    assert_eq!(body["error"]["details"], expected_details, "{snapshot:?}");
 }
 
 fn assert_safe_unified_generic_error(
@@ -92,6 +119,10 @@ fn assert_safe_unified_generic_error(
         expected_legacy_code,
         expected_stable_code,
     );
+    assert_safe_message(snapshot, expected_message);
+}
+
+fn assert_safe_message(snapshot: &ErrorResponseSnapshot, expected_message: &str) {
     let body: Value = serde_json::from_str(&snapshot.body).expect("parse unified error body");
     assert_eq!(body["message"], expected_message, "{snapshot:?}");
     let public_message = body["message"]
@@ -210,7 +241,7 @@ async fn invalid_job_payload_uses_json_bad_request_envelope() {
     assert!(body.get("data").is_none());
     assert_eq!(body["error"]["code"], "BAD_REQUEST");
     assert_eq!(body["error"]["http_status"], 400);
-    assert_eq!(body["error"]["details"], json!({}));
+    assert_eq!(body["error"]["details"], json!({ "reason": "schema_mismatch" }));
 }
 
 #[tokio::test]
@@ -315,7 +346,7 @@ async fn malformed_axum_json_rejection_uses_unified_error_envelope() {
         .expect("malformed credential response");
     let snapshot = error_response_snapshot(response).await;
 
-    assert_unified_generic_error(&snapshot, StatusCode::BAD_REQUEST, 40000, "BAD_REQUEST");
+    assert_body_error(&snapshot, "invalid_json");
 }
 
 #[tokio::test]
@@ -377,7 +408,8 @@ async fn method_not_allowed_uses_unified_error_envelope() {
 }
 
 #[tokio::test]
-async fn json_data_mismatch_keeps_422_and_redacts_parser_details() {
+/// 第 13 条（2026-11-24）：字段类型写错以前是 axum 默认的 422，现在和其余「请求写错了」一样是 400。
+async fn json_data_mismatch_is_400_and_redacts_parser_details() {
     let response = build_app(test_state("http-contract-json-data-mismatch"))
         .oneshot(
             Request::builder()
@@ -398,13 +430,8 @@ async fn json_data_mismatch_keeps_422_and_redacts_parser_details() {
         .expect("credential schema mismatch response");
     let snapshot = error_response_snapshot(response).await;
 
-    assert_safe_unified_generic_error(
-        &snapshot,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        42200,
-        "UNPROCESSABLE_ENTITY",
-        "JSON request body does not match the expected schema",
-    );
+    assert_body_error(&snapshot, "schema_mismatch");
+    assert_safe_message(&snapshot, "JSON request body does not match the expected schema");
 }
 
 #[tokio::test]
@@ -627,5 +654,44 @@ async fn unknown_query_parameters_on_files_delete_and_live_stream_are_rejected()
     ] {
         let (status, body) = send(method, uri).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}: {body}");
+    }
+}
+
+/// 任务列表 `GET /jobs`：不认识的查询参数 400（只回名字、不回值），`owner` 由路由按当前用户填，
+/// 查询串里带也算不认识；前端、桌面壳会带的参数全认识。2026-11-25 起，以前悄悄忽略。
+#[tokio::test]
+async fn unknown_query_parameters_on_job_list_are_rejected() {
+    let app = build_app(test_state("http-contract-job-list-query"));
+    let send = |uri: String| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri(uri)
+                        .header("X-API-Key", "test-key")
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            let status = response.status();
+            (status, read_json(response).await)
+        }
+    };
+    for field in ["scope", "owner", "sort"] {
+        let (status, body) = send(format!("/api/v1/jobs?limit=5&{field}=leak-me")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {body}");
+        let message = body["message"].as_str().expect("message");
+        assert!(message.starts_with(&format!("unknown field `{field}`")), "{message}");
+        assert!(!message.contains("leak-me"), "不回值: {message}");
+    }
+    for uri in [
+        "/api/v1/jobs?limit=1&offset=0",
+        "/api/v1/jobs?limit=20&offset=0&status=succeeded&workflow=ocr&provider=paddle&q=book&include_live_stage=false&job_ids=a,b",
+    ] {
+        let (status, body) = send(uri.to_string()).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
     }
 }

@@ -67,6 +67,15 @@ fn validate_request(request: &ReviseTranslationItemRequest) -> Result<(), AppErr
             "translated_text exceeds {MAX_REVISION_TEXT_CHARS} characters"
         )));
     }
+    if request
+        .expected_translated_text
+        .as_ref()
+        .is_some_and(|text| text.chars().count() > MAX_REVISION_TEXT_CHARS)
+    {
+        return Err(AppError::bad_request(format!(
+            "expected_translated_text exceeds {MAX_REVISION_TEXT_CHARS} characters"
+        )));
+    }
     if request.reason.chars().count() > MAX_REVISION_REASON_CHARS {
         return Err(AppError::bad_request(format!(
             "reason exceeds {MAX_REVISION_REASON_CHARS} characters"
@@ -111,6 +120,7 @@ pub(crate) async fn revise_translation_item(
         "source": request.source.as_str(),
         "reason": request.reason,
         "expected_generation": request.expected_generation,
+        "expected_translated_text": request.expected_translated_text,
     });
     let process = ReviseProcess {
         program: deps.pipeline_command.to_string(),
@@ -260,7 +270,7 @@ fn outcome_from_payload(
             translations_dir,
         }),
         "rejected" => Err(AppError::translation_revision(
-            StatusCode::UNPROCESSABLE_ENTITY,
+            StatusCode::BAD_REQUEST,
             reason,
             message,
             extra(&["validation"]),
@@ -269,7 +279,7 @@ fn outcome_from_payload(
             StatusCode::CONFLICT,
             reason,
             message,
-            extra(&["current_generation"]),
+            extra(&["current_generation", "current_translated_text"]),
         )),
         "not_found" => Err(AppError::not_found(message)),
         "invalid" => Err(AppError::bad_request(message)),
@@ -442,7 +452,7 @@ mod tests {
         );
         assert_eq!(
             status(json!({"outcome": "rejected", "reason": "validation_failed"})),
-            StatusCode::UNPROCESSABLE_ENTITY
+            StatusCode::BAD_REQUEST
         );
         assert_eq!(
             status(json!({"outcome": "conflict", "reason": "checkpoint_locked"})),

@@ -88,6 +88,16 @@ const TARGETS = [
     rootName: "CredentialsSchema",
   },
   {
+    input: "ai-agents.v1.schema.json",
+    output: "src/ai-agents.ts",
+    rootName: "AiAgentsSchema",
+  },
+  {
+    input: "ask-threads.v1.schema.json",
+    output: "src/ask-threads.ts",
+    rootName: "AskThreadsSchema",
+  },
+  {
     input: "provider-probes.v1.schema.json",
     output: "src/provider-probes.ts",
     rootName: "ProviderProbesSchema",

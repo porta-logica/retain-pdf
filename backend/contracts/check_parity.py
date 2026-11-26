@@ -9,6 +9,8 @@ from pathlib import Path
 
 
 CONTRACT_NAMES = (
+    "ai-agents.v1.schema.json",
+    "ask-threads.v1.schema.json",
     "auth-session.v1.schema.json",
     "create-job.v1.schema.json",
     "credentials.v1.schema.json",

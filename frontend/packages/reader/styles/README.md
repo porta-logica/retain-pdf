@@ -33,6 +33,9 @@ frontend/packages/reader/styles/
 ├── layout.css / chrome.css / content.css / react-pdf.css
 ├── assistant-dock.css / panel-shell.css / finder.css / live-translation.css
 ├── float-markdown.css / hud.css / markdown.css / markdown-blocks.css
+├── doc-theme.css           # 深色文档（书页黑底白字：画布反色滤镜 + 叠层深色纸墨）
+├── ask.css                 # 阅读页提问（src/ask/）：浮动问答窗、书页上的「?」
+├── zoom.css                # 放大查看一块（ReaderZoomViewer）：盖在书上的大框、高分辨率重画的那一块
 └── dialog-shell.css / reader.utilities.css
 ```
 
@@ -57,7 +60,8 @@ npm --prefix frontend/packages/reader run build
 npm --prefix frontend/web run build:css
 npm --prefix frontend/web test -- 'tests/reader/*.test.mjs'
 npm --prefix frontend/web test -- 'tests/architecture/*.test.mjs'
-npm --prefix frontend/web run visual:check
+npm --prefix frontend/web run build
+npm --prefix frontend/web run visual:check -- --base main --states reader
 ```
 
-只有确认实际渲染变化符合预期后才更新视觉基线。
+和 main 比阅读页（每个皮肤一张，翻译中、实时译文出齐后截）；只有打算改的地方允许不一样，用法见 `frontend/web/tests/README.md`。

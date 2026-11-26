@@ -73,13 +73,6 @@ pub struct TranslationDiagnosticsView {
     pub summary: Value,
 }
 
-/// 任务产物目录里一份 JSON 报告的原样内容（translation_qa.v1 / fit_report.v1 / refine_report.v1）。
-#[derive(Debug, Serialize)]
-pub struct JobReportView {
-    pub job_id: String,
-    pub report: Value,
-}
-
 #[derive(Debug, Serialize)]
 pub struct TranslationDebugListView {
     pub items: Vec<TranslationDebugListItemView>,
@@ -182,6 +175,11 @@ pub struct ReviseTranslationItemRequest {
     /// 乐观并发:带上读到的 checkpoint generation,期间有人改过就返回 409。
     #[serde(default)]
     pub expected_generation: Option<u64>,
+    /// 乐观并发(按内容):带上读到的旧译文,写回前在持锁的状态下和当前译文比,对不上 409 `text_mismatch`
+    /// (带 `current_translated_text`)。不看空白;展示形式、占位符形式都认。给 agent 用:它读的是书文件夹里的
+    /// 译文,拿不到 generation。2026-11-25 起。
+    #[serde(default)]
+    pub expected_translated_text: Option<String>,
     #[serde(default)]
     pub rerender: bool,
 }

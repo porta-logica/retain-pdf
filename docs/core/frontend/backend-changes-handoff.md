@@ -12,6 +12,234 @@
 
 ---
 
+## 阅读页提问：后端代装本机 agent，桌面版默认装上 pi 和 Claude Code（feat/acp-agent-install）
+
+2026-11-26，只增不改，见 [阅读页提问](../../api/16-AI/01-阅读页提问.md) 的「代装本机 agent」，方案
+[本机 agent 默认安装](../../ops/planning/reader-ask/20261126-本机agent默认安装.md)。**不改前端也能用**：列表形状不变，
+只多一个 `install_status`；推荐名单里 Google Antigravity（`antigravity-acp`）换下 Gemini CLI（`gemini` 照旧列出，`featured` 没了）。
+新接口 `POST /api/v1/ai/agents/:agent_id/install` 登记的是 `by(none)`，前端、桌面接上以后改成 `by(web)` / `by(desktop)`。
+
+### 桌面版（`frontend/desktop`）要做的
+
+| 文件 | 旧写法 | 新写法 |
+|---|---|---|
+| `frontend/desktop/src/main/backend-env.js` 的 `buildBackendEnv` | 没有 | 加 `RUST_API_ACP_DEFAULT_INSTALL: "1"`：后端启动后在后台把 pi（连 pi-acp）和 Claude Code 的适配器装进 `<数据目录>/acp-agents/`（用户自己已经装在 PATH 上的不装），不挡启动 |
+| 同上 | 没有 | 加 `RUST_API_NODE_DIR: <自带 Node 的目录>`：放 `node`、`npm` 的那一层（macOS / Linux 是 Node 发行包的 `bin/`，Windows 是放 `node.exe`、`npm.cmd` 的根；给发行包的根后端也认）。没设时后端用 PATH 上的 npm；PATH 上也没有，pi-acp 就不能代装（`install_status.reason` 说找不到 npm），Claude Code 的适配器在 macOS / Linux 改走压缩包 |
+| 打包脚本（`frontend/desktop/scripts/prepare-app.mjs` 一带） | 不带 Node（Word 导出、rpr 用 Electron 当 node） | 带一份官方 Node，**≥ 22.19**（pi 1.6.1 要），按平台放进资源目录。想省体积也可以用 Electron 当 node：目录里放一个叫 `node` 的小脚本（`ELECTRON_RUN_AS_NODE=1 exec <Electron> "$@"`）加一份 npm 包的 `npm`；Windows 上 npm 的 `.cmd` 外壳找 node 的方式不同，不建议 |
+
+- 后端起 npm 和起托管的 npm 包时会把这个目录放在子进程 PATH 最前面（npm 包的入口是 `#!/usr/bin/env node`），桌面壳不用另外改 PATH。
+- 第一次装 pi + pi-acp 约 170 MB（本机 75 秒），Claude Code 的适配器更大；npm 缓存用用户的 `~/.npm`。
+- macOS 上后端用 reqwest 下的压缩包不带隔离属性（quarantine），解开就能起。
+
+### 前端页面要做的（建议）
+
+| 文件 | 旧写法 | 新写法 |
+|---|---|---|
+| `frontend/web/src/features/reader/domain/ask-port.ts` 的 `AgentRow` | 没有 `install_status` | 另有可选的 `install_status: {state, managed, installable, method?, installed_version?, error?, reason?}`；`state` 是 `missing` / `installing` / `installed` / `failed` |
+| 同上，没装的 agent | 显示 `install`（终端命令）或 `install_url` | `install_status.installable` 为 true 时给一个「安装」按钮：`POST /api/v1/ai/agents/{id}/install`（没有请求体，回 202 / 200，`data` 是这个 agent 的新样子），之后每 2 秒左右 `GET /ai/agents` 直到 `state` 不是 `installing`；`failed` 显示 `error`，可以再点；`installable` 为 false 时照旧显示 `install` / `install_url`，`reason` 可以做成提示 |
+| `frontend/packages/api`（生成客户端） | 只有 `listAiAgents` | 契约里新接口没写 `client_name`，前端按自己的命名加（比如 `installAiAgent`），再 `npm --prefix frontend/packages/api run generate:client` |
+| `frontend/web/src/platform/mock/ask-agent.ts`（可选） | 没有安装状态 | 演示模式可以给一个 agent 带 `installable: true` 试按钮 |
+
+- 安装接口的闸门和起本机 agent 一样：只有本机地址打开的页面能装（局域网共享、经过代理 403），多用户、服务器上一律 403。
+  不认识的 404、自带的 400、后端不能代装 409（`error.details.reason = "agent_not_installable"`，`message` 是原因）。
+- 状态只在后端内存里：后端重启后正在装的会停（下次再装会清掉半成品），失败原因没了。
+
+## 阅读页提问：第二个自带 agent「RetainPDF + pi」（feat/pi-agent）
+
+2026-11-26，只增不改，见 [阅读页提问](../../api/16-AI/01-阅读页提问.md) 的「RetainPDF + pi」，方案
+[RetainPDF 加 pi](../../ops/planning/reader-ask/20261126-RetainPDF加pi.md)。`GET /api/v1/ai/agents` 的第二行多了
+`{"id": "retainpdf-pi", "name": "RetainPDF + pi", "kind": "builtin", …}`：用设置里的模型，agent 是本机装的 pi（加我们的读书扩展）。
+只在本机 agent 的闸门里能用（单机、本机打开），没装 pi-acp / pi 时 `available: false`，`reason`、`install` 和本机 agent 一样。
+
+**不改前端时**：列表里会显示这一行，但前端现在只给 `id === "retainpdf"` 带模型配置，点了它握手缺 `model` / `credential_ref`，回 `400`。
+
+前端要改的：
+
+| 文件 | 旧写法 | 新写法 |
+|---|---|---|
+| `frontend/web/src/features/reader/domain/ask-port.ts` 的 `toReaderAgents` | `const builtin = id === BUILTIN_AGENT_ID` | `const builtin = row.kind === "builtin"`（两个自带的都「用设置里的翻译模型」、都要设置里配了模型；`acceptsImages` 也是两个都 `true`） |
+| 同上，`openSession` | `agentId === BUILTIN_AGENT_ID` 时才带 `builtinModelQuery()`、`credential_ref`（`ensureAskCredential`）、`job_id` | 按列表里这一行的 `kind === "builtin"` 判断（`openSession` 拿不到行的话，可以先认 `agentId === "retainpdf" \|\| agentId === "retainpdf-pi"`），三样都带上 |
+| 同上，`description` | 自带的写「用设置里的翻译模型」 | `retainpdf-pi` 可以用后端给的 `description`（「用设置里的模型，agent 骨架是本机装的 pi……」），或写「用设置里的翻译模型（pi）」 |
+| `frontend/web/tests/reader/reader-ask-port.test.mjs`（可选） | 只有 `retainpdf` 一个 builtin | 加一行 `retainpdf-pi`，测它也带模型配置 |
+
+连上以后和 `retainpdf` 的差别（pi-acp 0.0.35 的行为，问答窗照 ACP 画就行）：
+
+- 工具卡片的 `title` 是工具名（`read_pages`、`search_book`、`view_page`），`kind` 是 `other`；`rawInput` 是模型给的参数，可以照 Python 版自己拼「读第 5、6 页」。
+- 没有 `_meta.retainpdf.usage`：`usage_update` 只有 `used` / `size`，`session/prompt` 的结果只有 `stopReason`，用量那一行只能显示上下文占了多少。
+- 多了 `session_info_update`（会话标题，pi-acp 取问题开头）和 `available_commands_update`（pi-acp 的斜杠命令：`compact`、`export`……），不用显示。
+- `initialize` 回 `loadSession: true`（pi 的会话存在后端的 `<数据目录>/ask-pi/sessions`），以后做「重新打开接着问」可以用 `session/load`。
+- 模型要是想调别的工具（bash 之类）会看到一张 `kind: "execute"` 的失败卡片（「Tool bash not found」），这是被锁住了，不是出错。
+
+---
+
+## 阅读页提问：本机 agent 改从 ACP 官方登记表来（feat/acp-registry）
+
+2026-11-26，只增不改，见 [阅读页提问](../../api/16-AI/01-阅读页提问.md) 的「能用哪些 agent」，方案
+[ACP 官方登记表](../../ops/planning/reader-ask/20261126-ACP官方登记表.md)。**不改前端也能用**：`GET /api/v1/ai/agents` 还是那个形状，
+`claude-code`、`codex`、`gemini` 三个 id 不变，只是本机 agent 从 3 个变成 42 个（pi、OpenCode、Qwen Code、Kimi Code、goose、Copilot、Cursor……），
+装了的排在前面。
+
+前端要改的（建议）：
+
+| 文件 | 旧写法 | 新写法 |
+|---|---|---|
+| `frontend/web/src/features/reader/domain/ask-port.ts` 的 `AgentRow` | `{id, name, kind, available, reason, launch, install}` | 另有可选的 `registry_id`、`description`（英文一句）、`version`、`homepage`、`license`、`distribution`（`binary` / `npx` / `uvx`）、`install_url`、`featured` |
+| 同上，列 agent | 全列 | 42 个太长：只展开 `available` 的和 `featured` 的（推荐 10 个），其余没装的折进「更多」 |
+| 同上，没装的提示 | 显示 `install`（安装命令） | 只有压缩包的 agent（goose、Cursor、OpenCode……）没有 `install`，给 `install_url`（下载地址）；`reason` 里也写了「下载……解压，把 X 放进 PATH」。`homepage` 可以做成「说明」链接 |
+| `frontend/web/src/platform/mock/ask-agent.ts`（可选） | 三个 agent | 演示模式可以加一个 pi，用 `registry_id`、`featured` 试折叠 |
+
+- 握手地址不变；登记表 id 也认（`/ai/agents/claude-acp/acp` 等于 `claude-code`），前端继续用列表里的 `id` 就行。
+- 实测：Gemini CLI 个人版 `session/new` 回 `-32000`（Google 停了个人版 Code Assist，要换 API key 或迁 Antigravity）；Grok 回
+  `Authentication required`（要 ACP 的 `authenticate`）。这两种错误桥原样转，问答窗把 JSON-RPC 错误的 `message` 显示出来就好。
+- pi（`pi-acp`）不收桥补的 `retainpdf` MCP 服务，读不了书，只靠出处那段字回答。
+- `docs/core/frontend/reader-ask.md` 里「本机 Claude Code / Codex / Gemini」的说法，前端改时顺带更新。
+
+---
+
+## 阅读页提问：自带 agent 自己读书（feat/ask-agent-tools）
+
+2026-11-25，只增不改，见 [阅读页提问](../../api/16-AI/01-阅读页提问.md) 的「自带 agent 读书」，方案
+[自带 agent 读书](../../ops/planning/reader-ask/20261125-自带agent读书.md)。不改前端，自带 agent 和以前一样只靠出处那段字回答。
+
+前端要改的（`frontend/web/src/features/reader/domain/ask-port.ts` 连 agent 的那段）：
+
+| | 旧写法 | 新写法 |
+|---|---|---|
+| 连自带 agent | `WS /api/v1/ai/agents/retainpdf/acp?api_key=…&model=…&base_url=…&api_protocol=…&thinking=…&credential_ref=…` | 再加 `&job_id=<阅读页的任务编号>`（打开阅读页用的那个，合并阅读的 `merged-…` 照传；要 URL 编码）。本机 agent 不用传 |
+
+- 握手新的错误（升级前，HTTP）：`job_id` 字符不对 `400`，没有这个任务 `404`，多用户下不是自己的 `403`。
+- 连上以后多了 ACP 的工具卡片：代码先把附近的材料给了模型，问这段字本身一般不调工具；问到书里别处（「书里别处怎么用这个词」
+  「第 30 页讲什么」「全书讲什么」）时 agent 会读页、搜书。每个工具一条
+  `tool_call`（`title` 如「读第 5、6 页」「在书里找「Hamiltonian」」，`kind` 是 `read` / `search` / `fetch`，`status: in_progress`）
+  和一条 `tool_call_update`（`completed` / `failed`，`content` 是一句摘要）。按 ACP 画就行，不用许可（不发 `session/request_permission`）。
+- `usage_update` 的 `_meta.retainpdf.usage` 多了 `rounds`、`tool_calls`、`context`（代码自动取了哪些页、几块），
+  token 是各轮加起来的；问答记录里照旧原样存。
+- 可选（以后）：`session/prompt` 的参数里给 `_meta: {retainpdf: {anchor: {page, item_id, selection, source_text, translated_text}}}`
+  （问答记录的锚点写法）。不给时 agent 从 `anchorPromptBlocks` 写的出处里认（最后一行「（RetainPDF 任务 …，块 …，第 … 页）」和
+  「我选中的这段：」「这一块的原文：」「这一块的译文：」），所以**改那段出处的写法前先告诉后端**，或者先改成给 `_meta`。
+
+---
+
+## 阅读页提问：问答记录存后端（feat/ask-records）
+
+2026-11-25，新接口，只增不改，见 [阅读页提问](../../api/16-AI/01-阅读页提问.md) 的「问答记录」、契约 `ask-threads.v1`
+（`@retainpdf/contracts/ask-threads`，src、dist 已生成）。书页上的「?」可以从后端读了，不再只在内存里：
+
+| 方法 | 地址 | 请求体 | 返回 `data` |
+|---|---|---|---|
+| `GET` | `/api/v1/documents/{document_id}/ask-threads` | — | `AskThreadListView`：`{threads: AskThreadRecord[]}`，最近改过的在前，不带问答正文 |
+| `POST` | `/api/v1/documents/{document_id}/ask-threads` | `CreateAskThreadInput`：`{agent_id, session_id?, anchor, messages?}` | `AskThreadView` |
+| `GET` | `/api/v1/documents/{document_id}/ask-threads/{thread_id}` | — | `AskThreadView` |
+| `PATCH` | `/api/v1/documents/{document_id}/ask-threads/{thread_id}` | `PatchAskThreadInput`：`{agent_id?, session_id?, messages?}` | `AskThreadView` |
+| `DELETE` | `/api/v1/documents/{document_id}/ask-threads/{thread_id}` | — | `{thread_id, deleted: true}` |
+
+- `AskThreadRecord`：`thread_id`（`ask-` 开头）、`document_id`、`agent_id`、`session_id`（可 null）、`title`（后端取第一句问，最长 80 字）、
+  `anchor`、`message_count`、`created_at`、`updated_at`。`AskThreadView` 再多 `messages: [{role, text, thought, usage}]`
+  （`role` 是 `user` / `assistant`，`thought`、`usage` 没有是 null；`usage` 原样存，直接放 `_meta.retainpdf.usage`）。
+- `anchor` 就是 `ReaderAskAnchor` 换成下划线：`{pane, page, item_id, selection, source_text, translated_text, section, point}`
+  （`point` 是 `{x, y}` 或 null）。请求里只有 `pane`、`page` 必填，返回里每个键都在。
+- 建议的接法（`packages/reader` 的 `ReaderAskMarks`、web 的 `ask-port.ts`，前端定）：打开书 `GET` 列表画「?」；第一轮答完 `POST`
+  （带上 `messages`）；以后每答完一轮把整段对话 `PATCH` 一次（`messages` 整份换掉，重发同一份没关系）；点「?」`GET` 一次再打开；删「?」`DELETE`。
+- 重新打开时 agent 那边是新会话：把记下的问答带进第一问，拿到新的 `sessionId` 再 `PATCH` `session_id`。自带 agent 的 `session/load` 以后做。
+- 错误：书不在、这次提问不在这本书上 404；书上已有 500 次 409 `ask_thread_limit`；字段不对、超长（一条正文 50000 字、一次提问 200 条 / 1 MB）400。
+- 契约里**没写 `client_name`**（前端生成客户端有漂移检查）：前端接的时候在两份契约（`contracts/`、`backend/contracts/`）的 5 个端点加
+  `client_name`（比如 `listAskThreads`、`createAskThread`、`getAskThread`、`patchAskThread`、`deleteAskThread`），跑 `npm run generate`（contracts）
+  和 `npm run generate:client`，同一个提交。
+
+---
+
+## 阅读页提问：agent 列表和 ACP 桥（feat/acp-bridge）
+
+2026-11-25，新接口，见 [阅读页提问](../../api/16-AI/01-阅读页提问.md)、契约 `ai-agents.v1`（`@retainpdf/contracts/ai-agents`）：
+
+- `GET /api/v1/ai/agents`：自带的 + 本机 agent，`available`、`reason`、`launch`；`local_agents.enabled`。契约里**先没写 `client_name`**：
+  生成客户端（`frontend/packages/api`）有漂移检查，后端加了名字前端测试就红。前端接的时候在契约里加 `client_name`（比如 `listAiAgents`），
+  两份契约（`contracts/`、`backend/contracts/`）一起改，跑 `npm run generate`（contracts）和 `npm run generate:client`，同一个提交。
+- WebSocket `GET /api/v1/ai/agents/{agent_id}/acp?api_key=…`：ACP 原样转；自带 agent 再带 `model`、`base_url`、`api_protocol`、
+  `thinking`、`credential_ref`。握手前就不行的是 HTTP 错误（400 / 403 / 404），连上后 agent 退出关闭码 1011。
+- 自带 agent 本身（Python `retainpdf_ask_agent`）是第 2 步，合进来之前连 `retainpdf` 会马上 1011。
+- 桌面局域网共享拦 `/api/v1/ai`（前端 feat/reader-ask 已加）。
+
+---
+
+## 目录 agent：建任务的 `translation.toc`（feat/toc-agent）
+
+2026-11-25，只增不改，**前端不用改**，见 [翻译参数](../../api/04-翻译/01-翻译参数.md) 的「目录翻译（`toc`）」：
+
+- 契约 `create-job.v1` / `library-documents.v1` 的 `TranslationInput`、`job-status.v1` 的 `PublicTranslationInput` 多一个可选字段
+  `toc`（`agent` 默认 / `translate`），`@retainpdf/contracts` 的 src、dist 已重新生成，`CREATE_JOB_SECTION_FIELDS.translation` 多了 `toc`。
+- 不提交就是 `agent`：目录 agent 和普通翻译同步跑，目录条目和正文同名标题用同一个译名。不用放进界面；以后要给用户关掉的开关，提交 `translate`。
+- 任务详情的请求参数回显 `translation.toc`（老任务回显 `agent`）。
+
+---
+
+## 防重复提交：续跑查重、`Idempotency-Key` 请求头（feat/job-idempotency）
+
+2026-11-24，只增不改，见 [防重复提交](../../api/00-约定/06-防重复提交.md) 和
+[决定记录](../../ops/planning/api-reorg/20261124-防重复提交.md)：
+
+- **续跑、重试出新任务时查重（前端不改也生效）**：`POST /jobs/{id}/actions/resume`（旧名 `rerun`）、`retry-stage`（出新任务时）、
+  `resolve-ocr-ambiguity`，如果这个任务已经续跑 / 重试出一个还在排队或在跑的新任务，回 `409`，
+  `error.details.reason = "derived_job_active"`，`error.details.active_job_id` 是那个任务的编号。契约 `job-actions.v1` 的
+  `ActionBlockReason` 加了这个值，`@retainpdf/contracts` 的 dist 已重新生成；`frontend/packages/api` 的生成客户端不用变。
+  前端的 `reason` 分支对不认识的值本来就按「状态不允许，看 message」处理，不改也不会坏（会显示英文 message）。
+- **新请求头 `Idempotency-Key`**（不带时行为完全不变）：`POST /jobs`、`POST /documents/{id}/translate`、`/ocr`、
+  `POST /jobs/{id}/actions/resume`（及 `rerun`）、`retry-stage`、`resolve-ocr-ambiguity` 接受。同一把 key、同一个请求第二次来
+  不再执行，原样回第一次的 2xx 结果并带响应头 `Idempotent-Replayed: true`；上一个还在处理 `409 idempotency_key_in_flight`；
+  同一把 key 换了请求体 `409 idempotency_key_reused`；key 不合法 `400`。记录保留 24 小时。CORS：单机模式请求头照回显、响应头全暴露，
+  不用改；桌面端局域网转发（`frontend/desktop/src/main/lan-share.js`）只去掉几个固定的头，这个头照常转发。
+
+前端要做：
+1. `frontend/packages/api/src/request.ts` 的 `RequestOptions` 加 `headers?: Record<string, string>`，`request()` 发请求时并进去
+   （旧写法：只有 `signal`、`fetchImpl`、`onError`；新写法：多一个 `headers`，生成的客户端函数不用改，它们原样把 `options` 传下去）。
+2. 用户每点一次「翻译 / 续跑 / 重试」生成一个 UUID（`crypto.randomUUID()`），放进 `Idempotency-Key`；**同一次点击的网络重试
+   （包括超时后自动重发）复用同一个**，下一次点击换新的。要改的入口：
+   - `frontend/packages/api/src/jobs-submit.ts` 的 `createJob`（`POST /jobs`）；
+   - `frontend/packages/api/src/documents.ts` 的 `translateDocument`、`ocrDocument`；
+   - `frontend/packages/api/src/jobs-actions.ts` 的 `resumeJob`、`retryJobStage`、`resolveOcrAmbiguity`。
+   旧写法：`actions.resumeJob(apiPrefix, { job_id, body }, { onError: submitFailure() })`；新写法：调用方传进一个 key，
+   `{ onError: submitFailure(), headers: { "Idempotency-Key": key } }`。key 在按钮点击处生成（比如 `libraryController.resumeJob` 一类），
+   重试逻辑拿同一个 key 重发。
+3. 新的 409 原因怎么展示（按 `error.details.reason` 分支，不解析 message）：
+   - `derived_job_active`：「这个任务已经在续跑 / 重试中（任务 {active_job_id}），等它结束或先取消它。」给一个跳到那个任务的链接
+     （书籍详情里就是切到那个任务、刷新任务列表）。按钮不用变灰，`GET /actions` 的 `disabled_code` 里不会有这个值。
+   - `idempotency_key_in_flight`：同一次点击的重发撞上第一次还没处理完，等一两秒用**同一个 key** 再发一次即可，不用提示用户。
+   - `idempotency_key_reused`：前端自己的 bug（同一个 key 发了不同的请求），记日志、换新 key；给用户看通用的「提交失败，请重试」。
+   - 响应头 `Idempotent-Replayed: true` 只是告诉你这是重放，结果和第一次一样，当成功处理就行。
+4. 前端测试：没有钉 `ActionBlockReason` 的测试；如果书籍详情有按 reason 显示文案的表（`job-failure-model.ts` 之类），加上面三个值。
+
+前端已跟上（`feat/idempotent-submit`，2026-11-25），和上面的建议有两处不同：
+- key 不从按钮传进来，由 `@retainpdf/api` 的 6 个提交函数（`createJob`、`translateDocument`、`ocrDocument`、`resumeJob`、
+  `retryJobStage`、`resolveOcrAmbiguity`）每次调用自己生成（`src/idempotency.ts` 的 `newIdempotencyKey()`）：前端没有自动重发，
+  一次调用就是一次点击。`RequestOptions` 加的是 `idempotencyKey?: string`，不是通用的 `headers`。
+  `crypto.randomUUID` 只在安全上下文里有（局域网 `http://192.168.x.x` 打开时没有），退回 `getRandomValues` 拼 UUID v4。
+- `derived_job_active` 不提示「等它结束」，直接切到那个任务：网页的 `platform/api/domains/jobs-actions.ts` 把续跑 / 重试的这个 409
+  换成一张指向 `active_job_id` 的回执（`already_active: true`），书籍详情、任务中心、任务详情都照提交成功的路子切过去、跟进度；
+  任务详情的提示写「已经有一个从这里续跑出来的任务在跑（编号），正在跳转」。OCR 歧义处理在 `ocr-ambiguity-recovery.ts` 里同样跟进那个任务。
+  `HttpError` 加了 `activeJobId`。没带 `active_job_id` 时退回提示文案（`describeActionError`）。
+- `idempotency_key_in_flight` / `idempotency_key_reused` 每次一把新 key 碰不到，`in_flight` 只留了一句兜底文案。
+- 测试：`frontend/web/tests/platform/idempotent-submit.test.mjs`。
+
+---
+
+## 请求体写错统一回 400，顶层 `code` 的用法（fix/api-error-format）
+
+2026-11-24，**前端不用改**，见 [请求体错误统一回 400](../../ops/planning/api-reorg/20261124-请求体错误统一回400.md)：
+
+- **请求体类型不对、缺必填字段、枚举值不认识：`422 UNPROCESSABLE_ENTITY`（顶层 `42200`）→ `400 BAD_REQUEST`（顶层 `40000`）**，
+  `error.details.reason = "schema_mismatch"`，`message` 没变。所有用 `ApiJson` 收请求体的接口都是（凭据、术语表、改单条译文、
+  任务动作、书库、设置……）。以前已经是 400 的两种也多带一个 reason：不是 JSON `invalid_json`、不认识的字段 `unknown_field`。
+  见 [认证与错误·请求体写错（400）](../../api/00-约定/02-认证与错误.md#请求体写错400)。
+- 核对过 `frontend/`：源码里没有按 `422`、`42200`、`UNPROCESSABLE_ENTITY` 判断的地方。改单条译文**内容**没过检查仍是
+  `422 TRANSLATION_REVISION_REJECTED`（`frontend/packages/api/src/translation-debug.ts` 按 `details.reason` 说人话，照旧能用）；
+  测试里的 422（`tests/shared/translation-debug-client.test.mjs`、`tests/book-detail/edit-translation.test.mjs`、
+  `tests/reader/reader-block-edit.test.mjs`、`tests/shared/document-ocr-client.test.mjs`）都是这个或自己造的假回应，不受影响。
+- **顶层 `code` 现有行为不改**：多数是数字，凭据、书的元数据建议、边翻边看、改单条译文、复用 OCR 建任务、账号这几类是字符串
+  （清单见 [响应格式·顶层 code 的类型](../../api/00-约定/01-响应格式.md#顶层-code-的类型)）。以后前端做分支判断只看
+  `error.code` 和 `error.details.reason`，不要看顶层 `code` 和它的类型；后端以后新加的错误顶层 `code` 一律是数字。
+
+---
+
 ## 失败简报带 `failure_code`，地区不支持单独成码（feat/failure-brief-code）
 
 2026-11-24，只增不改，见 [失败简报带失败码](../../ops/planning/error-codes/20261124-失败简报带失败码.md)：
@@ -162,7 +390,7 @@
 
 2026-11-23，用户定：检测接口（`/providers/deepseek/validate-token`、`/providers/{mineru,paddle}/validate-token`、
 `/providers/deepseek/balance`、`/providers/translation/models`、`/providers/translation/ask`）以前把 HTTP 状态码塞进 `provider_code`，
-429 一律当限流——欠费的 Key 检测显示「可用（当前被限流）」。细节见 [Provider 校验接口第 3.1 节](../rust_api/08-Provider%20校验接口.md)。
+429 一律当限流——欠费的 Key 检测显示「可用（当前被限流）」。细节见 [Provider 校验接口第 3.1 节](../../api/08-调试诊断/05-服务商校验.md)。
 
 变了什么：
 - **加** `http_status`（数字或 `null`）：服务商回的 HTTP 状态码，六个接口都有。契约 `translation-providers.v1` 的
@@ -310,7 +538,7 @@
 
 2026-11-22，用户要"后端增加一个 api，最好可以发图片"。新接口 `POST /api/v1/providers/translation/ask`（admin），在契约
 `translation-providers.v1` 里（`askTranslationProviderModel`、`TranslationModelAskRequest`、`TranslationModelAskView`），
-细节见 [Provider 校验接口第 9 节](../rust_api/08-Provider%20校验接口.md)。只增不改，别的接口不动。
+细节见 [Provider 校验接口第 9 节](../../api/08-调试诊断/05-服务商校验.md)。只增不改，别的接口不动。
 
 前端要做的：
 1. `npm --prefix frontend/packages/api run generate:client`：契约加了接口，`src/generated/translation-providers.ts` 要重新生成
@@ -421,7 +649,7 @@
 
 ## 从翻译接口拉取模型列表（feat/provider-model-list）
 
-2026-11-19。新接口，只增不改。详见 [Provider 校验接口](../rust_api/08-Provider%20校验接口.md) 第 8 节。
+2026-11-19。新接口，只增不改。详见 [Provider 校验接口](../../api/08-调试诊断/05-服务商校验.md) 第 8 节。
 
 - `POST /api/v1/providers/translation/models`，请求 `{base_url, api_key, api_protocol}`（内联 Key，用完不存）。
 - 返回 `{ok, status, summary, source: "provider", base_url, fetched_at, provider_code, provider_message, chat_models, models}`；
@@ -1237,8 +1465,8 @@ a positive integer`）；`0` 和正数都放行。
 （`contracts/dist/job-status.d.ts`），是 **required**——如果哪里在手工构造
 完整的 `RuntimeInput` 对象，TypeScript 会要求补上，填 `0` 即可。
 
-详见 [任务提交 API](../../../backend/api/docs/api-spec/jobs-submission.md) 的
-Timeout note 一节。
+详见 [创建任务](../../api/01-任务/01-创建任务.md) 的
+「超时」一节。
 
 ---
 
@@ -1263,7 +1491,7 @@ OCR 专用的取消 (`POST /api/v1/ocr/jobs/{job_id}/cancel`) 只在任务还是
 应该继续轮到状态真的变成 `canceled`。这个时序在改动前后都存在（改动前更糟：
 它可能永远不变），只是现在窗口很短。
 
-详见 [任务重试与控制](../../../backend/api/docs/api-spec/jobs-retry-and-control.md#cancel-job)。
+详见 [续跑、取消与 OCR 歧义处理](../../api/06-阶段操作/03-续跑取消与OCR歧义.md)。
 
 ---
 
@@ -1444,7 +1672,7 @@ API / jobsd 重启时，翻译阶段运行中的任务以前一律自动续跑�
 另外两点留给前端定：
 
 - 设置页说"Key 只存在这个浏览器里"，但提交任务时内联的 Key 会被后端导入凭据库，任务在就一直在服务端（什么时候清见
-  [凭据规范](../../../backend/api/docs/api-spec/credentials.md#when-credentials-imported-by-job-creation-are-removed)）。
+  [凭据](../../api/14-凭据/01-凭据.md#建任务时内联的密钥)）。
   要不要在设置页加"清除服务端保存的密钥"（`GET /credentials` 列出、`DELETE /credentials/{credential_ref}` 删），由前端定。
 - 凭据 `409` 现在可以按 `error.details.reason` 分支，`credentials.ts:75` 读顶层 `code` 的写法照旧能用。
 
@@ -1491,7 +1719,7 @@ API / jobsd 重启时，翻译阶段运行中的任务以前一律自动续跑�
 ## 服务商密钥校验：超时、重定向、不认识的字段，单机能测本机模型（fix/provider-probes）
 
 2026-10-22。方案见 [服务商探测与用量](../../ops/planning/api-reorg/20261022-服务商探测与用量.md)，接口说明见
-[Provider 校验接口](../rust_api/08-Provider%20校验接口.md)。
+[Provider 校验接口](../../api/08-调试诊断/05-服务商校验.md)。
 
 ### 变了什么
 
@@ -1867,3 +2095,54 @@ Studio（`frontend/studio`）自己的 AI，后端把 RetainPDF 自己的 AI 服
 PaddleOCR 返回 `max_file_bytes = 104857600`（100MB）和 `limits.chunked_upload_exempt = true`：整本翻译任务（OCR 之后紧接着翻译）
 按片上传，不看文件大小（后端 2026-11-12 起不再拦，以前超过 100MB 建任务会被拒）；纯 OCR 任务、填了自建服务地址、
 `transport=official_cli` 是整份提交，照旧 100MB。前端 `maxBytes: 0` 对整本翻译是对的，纯 OCR 任务要按 100MB 拦。
+
+## 接口规矩尾巴：409 全带 reason、`GET /jobs` 收紧、改译文不再回 422（2026-11-25，fix/api-rule-tail）
+
+见 [规矩尾巴补完](../../ops/planning/api-reorg/20261125-规矩尾巴补完.md)。都是只增或前端已经不受影响的改动，**前端不改也照常能用**。
+
+1. 改单条译文 `PATCH /jobs/{job_id}/translations/{item_id}` 新译文没过检查：`422` → `400`，`error.code` 照旧
+   `TRANSLATION_REVISION_REJECTED`，`details` 不变。`frontend/packages/api/src/translation-debug.ts` 的 `reviseTranslationItem`
+   按 `details.reason` 出提示，不用改；如果别处（测试、注释）写了 422，顺手改成 400。
+2. `GET /jobs` 查询串里不认识的参数 `400`（以前忽略）。`frontend/packages/api/src/jobs.ts` 的 `listJobs` 带的参数都认识，
+   桌面壳 `backend-http.js` 的 `limit`、`offset` 也认识；以后加参数要先在后端加。契约 `job-status.v1` 的 `ListJobsQuery` 加了
+   `additionalProperties: false`，生成的类型只多一段说明。
+3. 新的 409 `reason`（以前 `details` 是 `{}`）：`legacy_job_unsupported`（很早版本做的任务，读不了产物）、`event_source_not_file`
+   （兜底）、`job_exists`（建任务指定的编号已存在，前端不指定编号碰不到）、`tag_name_taken`（改标签名撞名，带 `existing_tag_id`；
+   标签接口前端还没接）。可选：给 `legacy_job_unsupported` 一句人话，例如「这是很早的版本做的任务，读不了，请重新上传翻译」。
+
+前端已跟上（`feat/idempotent-submit`，2026-11-25）：
+- 第 1 条：`frontend/web/tests/book-detail/edit-translation.test.mjs` 的模拟错误改成 `status: 400`；前端没有按 422 分支的代码。
+- 第 3 条：`@retainpdf/api` 的 `request()` 遇到 `legacy_job_unsupported` 不管调用方给的是哪种文案，都换成
+  「这是很早的版本做的任务，读不了它的文件，请重新上传翻译。」并挂上 `reason`（`http.ts` 的 `explainLegacyJob`），所有生成的请求函数都经过这里。
+  直接拿地址下载的产物（`<a href>`）不经过它。
+
+## 删续跑旧名 `actions/rerun`（2026-11-25，chore/drop-rerun-alias）
+
+`POST /jobs/{job_id}/actions/rerun` 删了（404）。前端早就只调 `actions/resume`（`resumeJob`），不受影响；接受 `Idempotency-Key` 的提交接口
+现在是 6 个（少了 rerun）。任务视图的 `actions.rerun` 字段还在，和 `actions.resume` 完全同值（地址也是 `actions/resume`）。
+
+前端要做（不急）：`frontend/packages/domain/src/job/actions.ts` 里 `actions.rerun?.enabled ?? artifactActions.rerun?.enabled` 的兜底去掉，
+只读 `resume`；去掉以后告诉后端，后端再删 `actions.rerun` 字段。见 [删续跑旧名 rerun](../../ops/planning/api-reorg/20261125-删续跑旧名rerun.md)。
+
+前端已跟上（`chore/drop-rerun-fallback`，2026-11-25）：`resolveJobActions` 只看 `actions.resume`（和 `artifacts.actions.resume`），
+不再读 `actions.rerun`；演示模式的任务数据也改成 `actions.resume`。后端可以删 `actions.rerun` 字段了。
+
+## 第三批删接口（2026-11-25，chore/api-delete-batch3）
+
+删了 `POST /fonts/upload`、`GET /jobs/{job_id}/data`（数据集目录，`listJobDatasets`）、`GET /jobs/{job_id}/reports/translation-qa`、
+`reports/layout-fit`、`reports/refine`，前端都没调。见 [第三批删接口](../../ops/planning/api-reorg/20261125-第三批删接口.md)。
+
+前端要做：
+1. 重新生成请求函数：`frontend/packages/api/src/generated/job-data.ts` 的 `listJobDatasets` 会消失（`getJobDataset` 照旧），不重新生成
+   「src/generated 和契约端点表一致」的检查是红的。契约 `job-data.v1` 删了 `JobDataCatalogView`、`JobDataDatasetInfo`、`JobDataFieldInfo`。
+2. 可选：`frontend/desktop/src/main/lan-share.js` 拦截名单里的 `/api/v1/fonts/upload` 和它的测试可以删（拦一个不存在的地址无害）。
+
+前端已跟上（`chore/api-client-regen-batch3`，2026-11-25）：两条都做了。`generate:client` 重新生成 `job-data.ts`；手写的
+`frontend/packages/api/src/job-data.ts`、`web/src/platform/api/domains/job-data.ts`、`mocks/job-data.ts` 去掉 `JobDataCatalogView` 的导出和引用；
+`lan-share.js` 拦截名单和 `lan-share.test.mjs` 去掉 `/api/v1/fonts/upload`。
+
+## 改译文可以带读到的旧译文（2026-11-25，feat/revision-expected-text）
+
+`PATCH /jobs/{job_id}/translations/{item_id}` 请求体多了可选的 `expected_translated_text`，对不上 409 `text_mismatch`（带
+`current_translated_text`）。给 agent 用，前端编辑框不用带，**前端不用改**。`REVISION_REASON_MESSAGES` 想覆盖全的话可以加一句
+`text_mismatch: "这段译文刚被别处改过，重新打开再改。"`。契约 `translation-revisions.v1` 已重新生成。

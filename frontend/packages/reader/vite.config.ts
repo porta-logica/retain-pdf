@@ -1,7 +1,8 @@
 import { defineConfig } from "vite";
 import path from "path";
 
-const packageDependencyPattern = /^(?:react|react-dom|react-pdf|pdfjs-dist|mathjax-full|marked|lucide-react|sonner|@retainpdf\/api|@retainpdf\/domain|@retainpdf\/ui)(?:\/.*)?$/;
+// 提问窗（@retainpdf/ask）和别的 workspace 包一样不打进 dist：宿主（web 的 esbuild）解析、按需拆块。
+const packageDependencyPattern = /^(?:react|react-dom|react-pdf|pdfjs-dist|mathjax-full|marked|lucide-react|sonner|@retainpdf\/api|@retainpdf\/domain|@retainpdf\/ui|@retainpdf\/ask|zustand)(?:\/.*)?$/;
 
 export default defineConfig({
   build: {
