@@ -2,15 +2,17 @@
 
 # CLAUDE.md
 
+@CLAUDE.fork.md
+
 Conventions for Claude Code working in this repository. For how to run the project and how directories are split, first read
 [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/README.md](docs/README.md); general AI development advice is in the
 [AI-assisted development guide](docs/core/contributing/ai-development.md). This file only covers rules that those documents don't, but that must be kept every time.
 
 ## Communication
 
-- Reply in English; write code identifiers, commands and paths as-is. (This fork's owner works in English, 2026-11-24.)
-- Commit messages in English, prefixed `type(scope): summary`, e.g. `fix(translate): …`, `refactor(api): …`.
-  Merge commits: `Merge branch 'xxx': one sentence saying what it brings in`.
+- Always reply in Simplified Chinese; write code identifiers, commands and paths as-is.
+- Commit messages in Chinese, prefixed `类型(范围): 说明` (type(scope): summary), e.g. `fix(translate): …`, `refactor(api): …`.
+  Merge commits: `Merge branch 'xxx'：一句话说清合进来什么` (one sentence saying what it brings in).
 
 ## Division of work
 
